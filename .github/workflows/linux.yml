@@ -11,6 +11,9 @@ jobs:
           sudo apt-get install -y qgis python3-qgis python3-gdal python3-numpy python3-tk python3-venv xvfb
       - name: Test download and launcher code
         run: /usr/bin/python3 -m unittest discover -s tests -v
+      - name: Report installed GIS versions
+        run: |
+          /usr/bin/python3 -c "from osgeo import gdal; from qgis.core import Qgis; print(gdal.VersionInfo('--version')); print('QGIS', Qgis.QGIS_VERSION)"
       - name: Test QGIS raster workers
         env:
           QGIS_PREFIX_PATH: /usr

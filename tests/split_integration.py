@@ -146,10 +146,13 @@ class SplitTests(unittest.TestCase):
         ds = None
         job = self.job('preview')
         job['inputs'].append(str(second))
-        with patch('split_worker.emit') as emit:
+        # Ubuntu's GDAL bindings do not expose GetDataTypeSizeBytes. Ensure
+        # preview metadata works without that newer convenience API.
+        with patch.object(gdal, 'GetDataTypeSizeBytes', None, create=True), patch('split_worker.emit') as emit:
             run(job)
         info = emit.call_args.kwargs['info']
         self.assertEqual((info['width'], info['height']), (22, 7))
+        self.assertEqual(info['bytes_per_pixel'], 2)  # One UInt16 band.
         self.assertTrue(Path(job['preview']).is_file())
 
     def test_existing_folder_preserved(self):

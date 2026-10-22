@@ -195,7 +195,10 @@ def run(job):
                 preview(ds, job['preview'], source)
                 info = {'width': width, 'height': height, 'transform': ds.GetGeoTransform(),
                         'projection': ds.GetProjection(),
-                        'bytes_per_pixel': sum(gdal.GetDataTypeSizeBytes(ds.GetRasterBand(b).DataType) for b in range(1, ds.RasterCount + 1))}
+                        # GetDataTypeSize returns bits and is available in the
+                        # GDAL bindings shipped by Ubuntu 24.04 as well as QGIS 4.
+                        'bytes_per_pixel': sum((gdal.GetDataTypeSize(ds.GetRasterBand(b).DataType) + 7) // 8
+                                               for b in range(1, ds.RasterCount + 1))}
                 emit('preview', info=info)
                 return
             validate_export(ds, job)
