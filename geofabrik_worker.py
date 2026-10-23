@@ -88,16 +88,22 @@ def extract(job):
     check(job)
     cache_dir = Path(job['cache_dir'])
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cached = import_extract(job['source'], cache_dir, job)
-    database = ogr.Open(str(cached))
+    sources = job.get('sources', [job.get('source')])
+    if not isinstance(sources, list) or not sources or any(not source for source in sources):
+        raise ValueError('Provide at least one OSM source file.')
+    sources = list(dict.fromkeys(str(Path(source).resolve()) for source in sources))
+    cached = []
+    for index, source in enumerate(sources, 1):
+        check(job)
+        emit(f'Preparing OSM dataset {index}/{len(sources)}: {Path(source).name}')
+        cached.append(import_extract(source, cache_dir, job))
     b = job['bounds']
     folder = Path(job['folder'])
     counts = {}
+    duplicates = {}
     for name in ('roads', 'places'):
         check(job)
         emit(f'Extracting {name} for selected TIFF/coordinate bounds…')
-        layer = database.GetLayerByName(name)
-        layer.SetSpatialFilterRect(b['west'], b['south'], b['east'], b['north'])
         target = folder / f'{name}.geojson'
         if target.exists():
             raise FileExistsError(f'{target.name} already exists.')
@@ -111,18 +117,35 @@ def extract(job):
             for field in ('osm_id', 'name', 'ref', 'highway', 'place', 'road_group'):
                 destination.CreateField(ogr.FieldDefn(field, ogr.OFTString))
             count = 0
-            for feature in layer:
-                if count % 1000 == 0:
-                    check(job)
-                out = ogr.Feature(destination.GetLayerDefn())
-                for field in ('name', 'ref', 'highway', 'place', 'road_group'):
-                    position = feature.GetFieldIndex(field)
-                    out.SetField(field, (feature.GetField(position) or '') if position >= 0 else '')
-                out.SetField('osm_id', ('way/' if name == 'roads' else 'node/') + str(feature.GetField('osm_id')))
-                out.SetGeometry(feature.GetGeometryRef())
-                destination.CreateFeature(out)
-                out = None
-                count += 1
+            duplicates[name] = 0
+            seen = set()
+            for index, path in enumerate(cached, 1):
+                check(job)
+                emit(f'Selecting {name} from dataset {index}/{len(cached)}…')
+                database = layer = feature = None
+                try:
+                    database = ogr.Open(str(path))
+                    layer = database.GetLayerByName(name)
+                    layer.SetSpatialFilterRect(b['west'], b['south'], b['east'], b['north'])
+                    for position, feature in enumerate(layer):
+                        if position % 1000 == 0:
+                            check(job)
+                        osm_id = str(feature.GetField('osm_id'))
+                        if osm_id in seen:
+                            duplicates[name] += 1
+                            continue
+                        seen.add(osm_id)
+                        out = ogr.Feature(destination.GetLayerDefn())
+                        for field in ('name', 'ref', 'highway', 'place', 'road_group'):
+                            field_index = feature.GetFieldIndex(field)
+                            out.SetField(field, (feature.GetField(field_index) or '') if field_index >= 0 else '')
+                        out.SetField('osm_id', ('way/' if name == 'roads' else 'node/') + osm_id)
+                        out.SetGeometry(feature.GetGeometryRef())
+                        destination.CreateFeature(out)
+                        out = None
+                        count += 1
+                finally:
+                    feature = layer = database = None
             destination = output = None
             check(job)
             partial.rename(target)
@@ -130,11 +153,14 @@ def extract(job):
         finally:
             destination = output = None
             partial.unlink(missing_ok=True)
-    feature = layer = database = None
     if not counts['roads'] and not counts['places']:
         raise ValueError('No roads or settlements found in this area. Choose a Geofabrik extract that covers the selected TIFF/coordinates.')
     emit(f"Extracted {counts['roads']} roads and {counts['places']} places from local Geofabrik data.")
-    (folder / 'extract-info.json').write_text(json.dumps({'counts': counts, 'database': str(cached)}, indent=2), encoding='utf-8')
+    emit(f"Removed {duplicates['roads']} duplicate roads and {duplicates['places']} duplicate places across datasets.")
+    info = {'counts': counts, 'databases': [str(path) for path in cached], 'duplicates_removed': duplicates}
+    if len(cached) == 1:
+        info['database'] = str(cached[0])
+    (folder / 'extract-info.json').write_text(json.dumps(info, indent=2), encoding='utf-8')
 
 
 if __name__ == '__main__':

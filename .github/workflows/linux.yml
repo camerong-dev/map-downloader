@@ -9,22 +9,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y qgis python3-qgis python3-gdal python3-numpy python3-tk python3-venv xvfb
-      - name: Test download and launcher code
-        run: /usr/bin/python3 -m unittest discover -s tests -v
       - name: Report installed GIS versions
         run: |
           /usr/bin/python3 -c "from osgeo import gdal; from qgis.core import Qgis; print(gdal.VersionInfo('--version')); print('QGIS', Qgis.QGIS_VERSION)"
-      - name: Test QGIS raster workers
+      - name: Test unit code and all QGIS workers
         env:
           QGIS_PREFIX_PATH: /usr
           QT_QPA_PLATFORM: offscreen
-        run: |
-          /usr/bin/python3 tests/mosaic_integration.py
-          /usr/bin/python3 tests/split_integration.py
-          /usr/bin/python3 tests/compression_integration.py
-          /usr/bin/python3 tests/hybrid_integration.py
-          /usr/bin/python3 tests/geofabrik_integration.py
-          /usr/bin/python3 tests/hybrid_jpeg_integration.py
+        run: /usr/bin/python3 check.py --qgis /usr
       - name: Smoke-test desktop tabs
         run: |
-          xvfb-run -a /usr/bin/python3 -c "from app import App; app=App(); app.withdraw(); app.update_idletasks(); assert app.splitter.create_overview.get(); assert app.splitter.overview_resolution.get() == '100'; assert app.mosaic.maximum.get() == '0.40'; app.destroy()"
+          xvfb-run -a /usr/bin/python3 tests/gui_smoke.py

@@ -8,9 +8,11 @@ import tempfile
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from tkinter.scrolledtext import ScrolledText
 
 from mosaic_runtime import find_qgis, qgis_command, start_worker
 from export_gui import CompressionControls
+from process_timing import ProcessDisplay
 
 
 class SplitTab(ttk.Frame):
@@ -66,7 +68,7 @@ class SplitTab(ttk.Frame):
         self.zoom_label = tk.StringVar(value='Preview 100%')
         ttk.Label(view, textvariable=self.zoom_label).pack(side='left', padx=10)
         ttk.Label(view, text='Wheel to zoom • Drag to pan • Click to select').pack(side='left')
-        self.canvas = tk.Canvas(self, background='#23313b', height=340, highlightthickness=0)
+        self.canvas = tk.Canvas(self, background='#23313b', height=250, highlightthickness=0)
         self.canvas.pack(fill='both', expand=True, pady=8)
         self.canvas.bind('<Configure>', self.canvas_resized)
         self.canvas.bind('<ButtonPress-1>', self.pan_start)
@@ -114,7 +116,11 @@ class SplitTab(ttk.Frame):
         self.progress = ttk.Progressbar(bottom, maximum=100)
         self.progress.pack(side='left', fill='x', expand=True)
         self.status = tk.StringVar(value='Ready')
-        ttk.Label(self, textvariable=self.status, wraplength=780).pack(anchor='w')
+        self.process_display = ProcessDisplay(self, self.status, wraplength=780)
+        self.process_display.pack(fill='x')
+        self.log = ScrolledText(self, height=3, state='disabled')
+        self.log.pack(fill='x', pady=(4, 0))
+        self.process_display.log = self.log
         self.after(100, self.poll)
 
     def browse_qgis(self):
@@ -294,6 +300,7 @@ class SplitTab(ttk.Frame):
             return
         root = self.qgis.get()
         self.busy = True
+        self.process_display.start('Map preview' if job['action'] == 'preview' else 'Split map export')
         self.encoding.set_busy(True)
         self.load_button.configure(state='disabled')
         self.export_button.configure(state='disabled')
@@ -319,7 +326,7 @@ class SplitTab(ttk.Frame):
             except Exception as error:
                 self.events.put({'kind': 'error', 'message': str(error)})
             finally:
-                self.events.put({'kind': 'done'})
+                self.events.put({'kind': 'done', 'finished': self.process_display.stamp()})
         threading.Thread(target=work, daemon=True).start()
 
     def draw(self):
@@ -403,6 +410,7 @@ class SplitTab(ttk.Frame):
                 self.status.set('Preview ready. Click the areas you want to export, or choose Select all. Yellow outlines show your selection.')
                 self.fit_map()
             elif kind == 'done':
+                self.process_display.finish(event.get('finished'))
                 self.busy = False
                 self.encoding.set_busy(False)
                 self.load_button.configure(state='normal')
@@ -418,6 +426,7 @@ class SplitTab(ttk.Frame):
                 self.status.set(event.get('message', ''))
                 if event.get('progress') is not None:
                     self.progress['value'] = event['progress']
+        self.process_display.refresh()
         self.after(100, self.poll)
 
     def cleanup(self):

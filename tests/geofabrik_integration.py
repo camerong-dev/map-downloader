@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from osgeo import gdal
 from geofabrik_worker import extract, import_extract
 from hybrid_worker import run
-from osm_download import collections
+from osm_fixtures import collections
 from qgis.core import QgsProject
 
 with tempfile.TemporaryDirectory(prefix='geofabrik-test-') as temporary:
@@ -84,6 +84,54 @@ with tempfile.TemporaryDirectory(prefix='geofabrik-test-') as temporary:
     extract(split_job)
     assert len(json.loads((split / 'roads.geojson').read_text())['features']) == 1
     assert cached.stat().st_mtime_ns == modified
+    # Two country-like extracts share border features, but each also contributes
+    # unique data. OSM node and way IDs are separate namespaces.
+    second_source = root / 'second-country.osm'
+    second_source.write_text('''<osm version="0.6" generator="test">
+<node id="1" lat="51.01" lon="0.01"><tag k="name" v="Test Town"/><tag k="place" v="town"/></node>
+<node id="2" lat="51.005" lon="-0.01"/><node id="3" lat="51.005" lon="0.03"/>
+<node id="30" lat="51.018" lon="0.017"><tag k="name" v="Second Town"/><tag k="place" v="town"/></node>
+<node id="31" lat="51.017" lon="0.014"/><node id="32" lat="51.017" lon="0.019"/>
+<way id="1"><nd ref="31"/><nd ref="32"/><tag k="highway" v="motorway"/><tag k="ref" v="M1"/></way>
+<way id="20"><nd ref="2"/><nd ref="3"/><tag k="highway" v="primary"/><tag k="ref" v="A27"/><tag k="name" v="Duplicate Main Road"/></way>
+</osm>''', encoding='utf-8')
+    combined = root / 'combined'
+    combined.mkdir()
+    multi_job = dict(job, sources=[str(source), str(second_source), str(source)], folder=str(combined))
+    extract(multi_job)
+    combined_roads = json.loads((combined / 'roads.geojson').read_text(encoding='utf-8'))['features']
+    combined_places = json.loads((combined / 'places.geojson').read_text(encoding='utf-8'))['features']
+    assert len(combined_roads) == 4 and len(combined_places) == 2
+    assert len({f['properties']['osm_id'] for f in combined_roads}) == 4
+    assert {f['properties']['name'] for f in combined_places} == {'Test Town', 'Second Town'}
+    assert any(f['properties']['osm_id'] == 'way/1' for f in combined_roads)
+    assert any(f['properties']['osm_id'] == 'node/1' for f in combined_places)
+    assert next(f for f in combined_roads if f['properties']['osm_id'] == 'way/20')['properties']['name'] == 'Main Road'
+    info = json.loads((combined / 'extract-info.json').read_text())
+    assert len(info['databases']) == 2
+    assert info['duplicates_removed'] == {'roads': 1, 'places': 1}
+    assert cached.stat().st_mtime_ns == modified
+    run(dict(multi_job, resolution=5))
+    assert (combined / 'overlay.tif').is_file()
+    project.clear()
+    assert project.read(str(combined / 'hybrid.qgz'))
+    assert all(layer.isValid() for layer in project.mapLayers().values())
+    project.clear()
+    # Reusing both datasets for a subregion must filter both sources to that area.
+    combined_split = root / 'combined-split'
+    combined_split.mkdir()
+    extract(dict(multi_job, folder=str(combined_split), bounds=split_job['bounds']))
+    assert len(json.loads((combined_split / 'roads.geojson').read_text())['features']) == 1
+    # If a later source fails, the importer must not publish a partial combined overlay.
+    failed = root / 'failed'
+    failed.mkdir()
+    try:
+        extract(dict(multi_job, folder=str(failed), sources=[str(source), str(root / 'missing.pbf')]))
+        raise AssertionError('Missing source was ignored')
+    except FileNotFoundError:
+        pass
+    assert not (failed / 'roads.geojson').exists()
+    assert cached.exists()
     cancel = root / 'cancel'
     cancel.touch()
     try:
@@ -93,4 +141,4 @@ with tempfile.TemporaryDirectory(prefix='geofabrik-test-') as temporary:
         raise AssertionError('Cancellation was ignored')
     except InterruptedError:
         pass
-print('Geofabrik integration passed: fields, filters, cached import, styling, split bounds and cancellation.')
+print('Geofabrik integration passed: single/multiple sources, border deduplication, cache reuse, styling, split bounds and cancellation.')

@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 from osgeo import gdal, osr
 from hybrid_worker import run, inspect_imagery
-from osm_download import collections
+from osm_fixtures import collections
 
 
 with tempfile.TemporaryDirectory(prefix='hybrid-test-') as temporary:

@@ -31,6 +31,22 @@ class Bounds:
             raise ValueError('Latitude must satisfy -90 ≤ south < north ≤ 90.')
 
 
+def parse_region(text):
+    """Read two WGS84 corners and normalize reversed longitude/latitude edges."""
+    try:
+        values = [float(value.strip()) for value in text.split(',')]
+    except ValueError:
+        raise ValueError('Enter four decimal numbers: west, south, east, north.') from None
+    if len(values) != 4 or not all(math.isfinite(value) for value in values):
+        raise ValueError('Enter four finite decimal numbers: west, south, east, north.')
+    lon1, lat1, lon2, lat2 = values
+    if abs(lon2 - lon1) > 180:
+        raise ValueError('Longitude span exceeds 180°. For a date-line region, split it into two downloads.')
+    bounds = Bounds(min(lon1, lon2), min(lat1, lat2), max(lon1, lon2), max(lat1, lat2))
+    bounds.validate()
+    return bounds
+
+
 @dataclass(frozen=True)
 class Tile:
     name: str

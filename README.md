@@ -181,13 +181,16 @@ from Google Maps. It does not download Google imagery or Google map labels.
 
 1. Paste **west,south,east,north** in the OSM tab, or leave it blank to use **Download region**.
 2. Open **OSM hybrid overlay** and check the QGIS folder.
-   The **Geofabrik URL / local PBF** field defaults to West Sussex. Paste another
-   Geofabrik `.osm.pbf` download URL, or browse to a previously downloaded local
-   `.osm.pbf` file. Local `.osm` XML files are also supported. To find extracts,
+   The **Geofabrik datasets** box defaults to West Sussex. Enter **one Geofabrik
+   `.osm.pbf` URL or local PBF path per line**. Use **Add PBF files…** to select
+   several already-downloaded files at once; you can mix URLs and local files.
+   Remove the default entry if it is not relevant. Local `.osm` XML files are also
+   supported. To find extracts,
    use the [Geofabrik download catalogue](https://download.geofabrik.de/).
    **Choose an extract covering all the land in your requested area.** For a map
-   crossing county boundaries, select a larger region such as England. Selecting
-   a TIFF changes the extraction bounds, not the geographical coverage of the PBF.
+   crossing country or county boundaries, add each relevant extract or use a larger
+   region. Selecting a TIFF changes the extraction bounds, not the coverage of the
+   chosen datasets.
 3. Optionally select a **rendered 8-bit RGB satellite TIFF** created by **Colour
    balance & merge**. Raw reflectance and categorical inputs are rejected. Leave
    this field empty to create the transparent overlay only. **Use full satellite
@@ -216,6 +219,22 @@ from Google Maps. It does not download Google imagery or Google map labels.
    nodes into a spatially indexed local GeoPackage. Later runs reuse the import and
    select data for each merged or split TIFF locally. You do not need to manage the
    GeoPackage manually.
+
+For a map spanning two countries, list both country files/URLs and select the
+complete merged satellite TIFF. The app imports each dataset, selects matching
+roads and settlements from both, and removes duplicate OSM IDs at shared borders.
+Node and way IDs are treated separately. If overlapping sources contain different
+versions of an object, the **first source listed wins**; use extracts from similar
+dates for a consistent snapshot. The manifest records all sources and duplicate
+counts. Each import is cached independently. A failed source stops the job instead
+of silently publishing a combined overlay with missing data.
+
+The result is still one `overlay.tif`, one `hybrid.tif` (when imagery is supplied),
+and one `hybrid.qgz`, using the same road filters, label style and compression
+options. You can split the completed hybrid in **Split maps visually**. Labels in
+those cuts remain fixed at the original export scale. For more detailed subregion
+labels, select a split satellite TIFF and reuse the same source list to create a
+new hybrid; matching regional imports are reused locally.
 
 **Roads and names to show** controls both the QGIS project and the exported
 GeoTIFFs. Motorways/M roads, A roads, B roads and other main roads are enabled by
@@ -249,7 +268,7 @@ Outputs:
   TIFF was supplied, plus matching `.qml`. Its pixel spacing is the selected export
   spacing, which may be coarser than the source satellite image. It includes only
   the requested region, rounded outward by less than one pixel east/south.
-- `osm-manifest.json` and `ATTRIBUTION.txt`: source, bounds, counts, date and credit.
+- `osm-manifest.json` and `ATTRIBUTION.txt`: all sources, bounds, counts, date and credit.
 
 GeoTIFF labels are fixed at the export scale; they cannot change when zooming. For
 different label detail, export another resolution or use the vector QGIS project.
@@ -278,8 +297,8 @@ and keeps completed files and the vector project.
 
 Regional downloads and indexed imports are saved in `.geofabrik-cache` beside the
 output folder. They have no automatic expiry: the log and manifest record the
-download date. Check **Refresh cached Geofabrik download** to fetch a fresh snapshot,
-or replace a local PBF with a newer download. Existing outputs are kept. The old
+download dates. Check **Refresh cached Geofabrik downloads** to fetch fresh snapshots
+for the URL entries, or replace local PBFs with newer downloads. Existing outputs are kept. The old
 `.esa-osm-cache` is unused by the hybrid tab and may be removed when no longer needed.
 Changing output parents uses a separate cache; to work fully offline, reuse the
 same parent or browse directly to your existing PBF. A local PBF is never downloaded
@@ -291,10 +310,25 @@ queries use the local spatial indexes. No Overpass request-count or feature-coun
 limits apply. A region outside the selected source can have missing roads; an
 entirely empty result is reported explicitly. Regions crossing ±180° must be split,
 and hybrid output supports latitudes from -85° to 85°.
-Cancellation waits for the current network read (40-second socket timeout), GDAL
+Network operations use a 90-second socket timeout and up to three attempts for
+temporary connection errors, HTTP 408/500/502/503/504 and incomplete transfers,
+waiting 5 and then 15 seconds between attempts. The log names the file and stage
+(checksum or PBF transfer). Permanent HTTP errors are reported without repeated
+requests. If the service remains unavailable, download the regional PBF files in
+a browser and add those local files; no checksum-service request is needed for
+local inputs.
+
+Interrupted PBF transfers are kept in checksum-specific `.part` files in the cache.
+Matching snapshots resume using HTTP Range after a retry or a later run. A server
+that ignores Range causes a safe restart. The completed file must pass its MD5
+check before import; invalid partials are removed. If the provider publishes a
+new snapshot, a different partial filename is used rather than mixing versions.
+
+Cancellation waits for the current network read (90-second socket timeout), GDAL
 import operation, or QGIS render. Completed downloads, imports and outputs remain;
-choose a new output folder for another run. Interrupted downloads/imports are removed
-and restart on retry. No online tiles are needed to view downloaded data.
+choose a new output folder in the same parent for another run to reuse downloads.
+Interrupted imports restart on retry; completed imports are reused. No online
+tiles are needed to view downloaded data.
 
 OSM data is licensed under the [ODbL](https://opendatacommons.org/licenses/odbl/1-0/).
 Exports show **© OpenStreetMap contributors** with the copyright URL; preserve this
@@ -438,11 +472,32 @@ Data license: CC BY 4.0. Preserve acknowledgement when sharing maps or derived d
 
 > © ESA WorldCover project [year] / Contains modified Copernicus Sentinel data ([year]) processed by ESA WorldCover consortium
 
+## Process timing
+
+All four tabs show timestamped status messages and process logs in local time,
+including the timezone offset in the logs. Each operation shows its start time
+and a live elapsed counter. When it finishes, fails, or is cancelled, its end time
+and total duration remain visible. Each tab keeps its own timing and log history
+for the current session. Elapsed time is unaffected by system clock adjustments.
+
 ## Checks
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
+
+Run the complete local check set (unit tests, all six QGIS integration suites,
+and the desktop smoke test) with:
+
+```powershell
+python check.py --gui
+```
+
+QGIS is detected automatically; use `--qgis "C:\Program Files\QGIS 4.2.3"` to
+select another installation. On headless systems omit `--gui`, or run with a
+virtual display. Timestamped logs and a summary are saved under
+`.verification/checks/`. Checks use temporary synthetic data and mocked downloads;
+they do not modify existing map files or require live download services.
 
 Tests cover coordinate/tile boundaries, cancellation, interrupted transfers and
 existing-file protection using mocked HTTP responses (no large downloads).

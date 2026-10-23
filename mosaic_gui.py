@@ -11,6 +11,7 @@ from tkinter.scrolledtext import ScrolledText
 
 from mosaic_runtime import find_qgis, start_worker
 from export_gui import CompressionControls
+from process_timing import ProcessDisplay
 
 
 class MosaicTab(ttk.Frame):
@@ -75,11 +76,13 @@ class MosaicTab(ttk.Frame):
         self.cancel_button = ttk.Button(actions, text='Cancel', command=self.cancel, state='disabled')
         self.cancel_button.pack(side='left', padx=8)
         self.status = tk.StringVar(value='Add imagery TIFFs and choose a new output file.')
-        ttk.Label(self, textvariable=self.status, wraplength=780).pack(anchor='w', pady=8)
+        self.process_display = ProcessDisplay(self, self.status, wraplength=780)
+        self.process_display.pack(fill='x', pady=8)
         self.progress = ttk.Progressbar(self, maximum=100)
         self.progress.pack(fill='x')
         self.log = ScrolledText(self, height=5, state='disabled')
         self.log.pack(fill='both', expand=True, pady=8)
+        self.process_display.log = self.log
         self.after(100, self.poll)
 
     def browse_qgis(self):
@@ -165,6 +168,7 @@ class MosaicTab(ttk.Frame):
             messagebox.showerror('Cannot process TIFFs', str(error))
             return
         self.busy = True
+        self.process_display.start('Colour balance & merge')
         self.encoding.set_busy(True)
         self.progress['value'] = 0
         self.status.set('Starting QGIS raster engine…')
@@ -192,7 +196,7 @@ class MosaicTab(ttk.Frame):
                 try:
                     workspace.cleanup()
                 finally:
-                    self.events.put(('done', None))
+                    self.events.put(('done', self.process_display.stamp()))
         threading.Thread(target=work, daemon=True).start()
 
     def poll(self):
@@ -202,6 +206,7 @@ class MosaicTab(ttk.Frame):
             except queue.Empty:
                 break
             if kind == 'done':
+                self.process_display.finish(data)
                 self.busy = False
                 self.encoding.set_busy(False)
                 self.cancel_path = None
@@ -212,12 +217,9 @@ class MosaicTab(ttk.Frame):
             else:
                 message = data if kind == 'error' else data.get('message', '')
                 self.status.set(message)
-                self.log.configure(state='normal')
-                self.log.insert('end', message + '\n')
-                self.log.see('end')
-                self.log.configure(state='disabled')
                 if kind == 'message' and data.get('progress') is not None:
                     self.progress['value'] = data['progress']
                 if kind == 'error':
                     messagebox.showerror('Raster processing failed', message)
+        self.process_display.refresh()
         self.after(100, self.poll)

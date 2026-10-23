@@ -7,11 +7,11 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
-from downloader import Cancelled, PRODUCTS, download, preview
-from osm_download import parse_region
+from downloader import Cancelled, PRODUCTS, download, preview, parse_region
 from mosaic_gui import MosaicTab
 from split_gui import SplitTab
 from hybrid_gui import HybridTab
+from process_timing import ProcessDisplay
 
 
 def human_size(value):
@@ -84,11 +84,13 @@ class App(tk.Tk):
         self.cancel_button = ttk.Button(actions, text='Cancel', command=self.cancel.set, state='disabled')
         self.cancel_button.pack(side='left')
         self.status = tk.StringVar(value='Your supplied region is loaded. Click “1. Preview region” to check available tiles.')
-        ttk.Label(frame, textvariable=self.status, wraplength=740).pack(anchor='w')
+        self.process_display = ProcessDisplay(frame, self.status, wraplength=740)
+        self.process_display.pack(fill='x')
         self.bar = ttk.Progressbar(frame, maximum=100)
         self.bar.pack(fill='x', pady=8)
         self.log = ScrolledText(frame, height=12, state='disabled', font=('Consolas', 9))
         self.log.pack(fill='both', expand=True)
+        self.process_display.log = self.log
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.after(100, self.poll)
 
@@ -118,8 +120,9 @@ class App(tk.Tk):
             self.coords[key].set(str(value))
         return bounds, int(self.year.get()), PRODUCTS[self.product.get()]
 
-    def launch(self, work):
+    def launch(self, work, operation='Download region'):
         self.busy = True
+        self.process_display.start(operation)
         self.cancel.clear()
         self.preview_button.configure(state='disabled')
         self.download_button.configure(state='disabled')
@@ -134,7 +137,7 @@ class App(tk.Tk):
             except Exception as error:
                 self.events.put(('error', str(error)))
             finally:
-                self.events.put(('done', None))
+                self.events.put(('done', self.process_display.stamp()))
         threading.Thread(target=run, daemon=True).start()
 
     def start_preview(self):
@@ -149,7 +152,7 @@ class App(tk.Tk):
             bounds, year, product = selection
             tiles = preview(bounds, year, self.cancel, lambda message: self.events.put(('status', message)), product)
             self.events.put(('preview', (selection, tiles)))
-        self.launch(work)
+        self.launch(work, 'Preview region')
 
     def start_download(self):
         try:
@@ -183,7 +186,7 @@ class App(tk.Tk):
             path = folder / f'region-{time.time_ns()}.json'
             path.write_text(json.dumps(manifest, indent=2), encoding='utf-8')
             self.events.put(('status', f'Complete: {len(tiles)} tiles available in {folder}'))
-        self.launch(work)
+        self.launch(work, 'Download tiles')
 
     def poll(self):
         for _ in range(200):
@@ -200,21 +203,17 @@ class App(tk.Tk):
             elif kind == 'preview':
                 self.selection, self.tiles = value
                 self.status.set(f'{len(self.tiles)} available tiles • {human_size(sum(t.size for t in self.tiles))} total' if self.tiles else 'No WorldCover tiles available in this region.')
-                self.log.configure(state='normal')
-                self.log.delete('1.0', 'end')
-                self.log.insert('end', '\n'.join(f'{t.name}  {human_size(t.size)}' for t in self.tiles) + '\n')
-                self.log.configure(state='disabled')
+                self.process_display.append('\n'.join(f'{t.name}  {human_size(t.size)}' for t in self.tiles))
             elif kind == 'log':
-                self.log.configure(state='normal')
-                self.log.insert('end', value + '\n')
-                self.log.see('end')
-                self.log.configure(state='disabled')
+                self.process_display.append(value)
             elif kind == 'done':
+                self.process_display.finish(value)
                 self.busy = False
                 self.preview_button.configure(state='normal')
                 self.download_button.configure(state='normal' if self.tiles else 'disabled')
                 self.cancel_button.configure(state='disabled')
                 self.apply_button.configure(state='normal')
+        self.process_display.refresh()
         self.after(100, self.poll)
 
     def close(self):

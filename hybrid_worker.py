@@ -210,6 +210,7 @@ def run(job):
     extent.setXMaximum(extent.xMinimum() + width * resolution)
     extent.setYMinimum(extent.yMaximum() - height * resolution)
     layers = []
+    has_features = {}
     selected_roads = job.get('road_groups', DEFAULT_ROADS)
     if any(group not in ROAD_GROUPS for group in selected_roads):
         raise ValueError('Unknown road display group.')
@@ -231,7 +232,9 @@ def run(job):
     for source, name, expression, scale, color, stroke, size, priority in specifications:
         check(job)
         path = folder / f'{source}.geojson'
-        if not json.loads(path.read_text(encoding='utf-8'))['features']:
+        if source not in has_features:
+            has_features[source] = bool(json.loads(path.read_text(encoding='utf-8'))['features'])
+        if not has_features[source]:
             continue
         layer = QgsVectorLayer(str(path), name, 'ogr')
         if not layer.isValid() or not layer.setSubsetString(expression):
@@ -275,7 +278,6 @@ def run(job):
     settings.setDestinationCrs(crs)
     settings.setTransformContext(project.transformContext())
     settings.setExtent(extent)
-    settings.setOutputSize(QSize(width, height))
     settings.setOutputDpi(96)
     settings.setBackgroundColor(QColor(0, 0, 0, 0))
     for name, selected in [('overlay', layers)] + ([('hybrid', ordered)] if satellite else []):

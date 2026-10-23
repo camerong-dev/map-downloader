@@ -9,17 +9,17 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
-from downloader import Bounds, Cancelled
+from downloader import Bounds, Cancelled, parse_region
 from mosaic_runtime import find_qgis, qgis_command, start_worker
-from osm_download import ATTRIBUTION, LICENSE, parse_region
-from geofabrik import DEFAULT_SOURCE, obtain, validate_source
+from geofabrik import ATTRIBUTION, LICENSE, DEFAULT_SOURCE, obtain, validate_sources
 from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS
 from export_gui import CompressionControls
+from process_timing import ProcessDisplay
 
 
 class HybridTab(ttk.Frame):
     def __init__(self, parent, bounds_provider):
-        super().__init__(parent, padding=18)
+        super().__init__(parent, padding=14)
         self.bounds_provider = bounds_provider
         self.busy = False
         self.events = queue.Queue()
@@ -27,11 +27,8 @@ class HybridTab(ttk.Frame):
         self.cancel_path = None
         ttk.Label(self, text='OSM hybrid overlay', font=('Segoe UI', 17, 'bold')).pack(anchor='w')
         ttk.Label(self, text='By default, OSM covers the selected satellite TIFF, including split TIFFs.',
-                  wraplength=760).pack(anchor='w', pady=8)
-        ttk.Label(self, text='Offline roads and place names • White labels with dark halos • Scale-aware QGIS project',
                   wraplength=760).pack(anchor='w', pady=4)
         self.qgis = tk.StringVar(value=find_qgis())
-        self.osm_source = tk.StringVar(value=DEFAULT_SOURCE)
         self.refresh_extract = tk.BooleanVar(value=False)
         self.imagery = tk.StringVar()
         self.output = tk.StringVar()
@@ -42,18 +39,25 @@ class HybridTab(ttk.Frame):
         ttk.Label(self, text='Four comma-separated numbers. Reversed west/east or south/north edges are sorted automatically.',
                   wraplength=760).pack(anchor='w')
         self.row('QGIS folder', self.qgis, lambda: self.choose(self.qgis, 'directory'))
-        self.row('Geofabrik URL / local PBF', self.osm_source, lambda: self.choose(self.osm_source, 'osm'))
-        refresh = ttk.Checkbutton(self, text='Refresh cached Geofabrik download (otherwise reuse offline)', variable=self.refresh_extract)
+        source_frame = ttk.LabelFrame(self, text='Geofabrik datasets — one URL or local PBF path per line', padding=5)
+        source_frame.pack(fill='x', pady=4)
+        self.source_text = ScrolledText(source_frame, height=3, width=60, wrap='none', font=('Consolas', 9))
+        self.source_text.pack(side='left', fill='x', expand=True)
+        self.source_text.insert('1.0', DEFAULT_SOURCE)
+        source_button = ttk.Button(source_frame, text='Add PBF files…', command=self.add_source_files)
+        source_button.pack(side='left', padx=(6, 0))
+        self.controls.extend([self.source_text, source_button])
+        refresh = ttk.Checkbutton(self, text='Refresh cached Geofabrik downloads (otherwise reuse offline)', variable=self.refresh_extract)
         refresh.pack(anchor='w')
         self.controls.append(refresh)
-        ttk.Label(self, text='Default: West Sussex. Choose a larger extract if your TIFF extends beyond that county.', wraplength=760).pack(anchor='w')
+        ttk.Label(self, text='Remove unused lines; add the countries/regions needed to cover your map. Default: West Sussex.', wraplength=760).pack(anchor='w')
         self.row('Satellite TIFF (optional)', self.imagery, lambda: self.choose(self.imagery, 'file'))
         self.use_tiff_bounds = tk.BooleanVar(value=True)
         extent_toggle = ttk.Checkbutton(self, text='Use full satellite TIFF bounds (overrides coordinates above)', variable=self.use_tiff_bounds)
         extent_toggle.pack(anchor='w')
         self.controls.append(extent_toggle)
-        ttk.Label(self, text='Select a rendered RGB TIFF from Colour balance & merge for baked satellite + labels.\n'
-                  'Leave blank for an overlay only. Originals are kept.', wraplength=760).pack(anchor='w', pady=5)
+        ttk.Label(self, text='Use a rendered RGB TIFF for satellite + labels, or leave blank for an overlay only.',
+                  wraplength=760).pack(anchor='w', pady=3)
         self.row('New output folder', self.output, lambda: self.choose(self.output, 'output'))
         self.row('Export metres/pixel', self.resolution)
         self.render_rasters = tk.BooleanVar(value=True)
@@ -62,7 +66,7 @@ class HybridTab(ttk.Frame):
         self.controls.append(raster_toggle)
         self.encoding = CompressionControls(self, allow_source=True)
         self.encoding.pack(fill='x', pady=4)
-        options = ttk.LabelFrame(self, text='Roads and names to show', padding=6)
+        options = ttk.LabelFrame(self, text='Roads and names to show', padding=4)
         options.pack(fill='x', pady=5)
         self.road_groups = {}
         for index, (key, title) in enumerate(ROAD_GROUPS.items()):
@@ -86,25 +90,25 @@ class HybridTab(ttk.Frame):
             button.grid(row=3, column=column, sticky='w', padx=5)
             self.controls.append(button)
         ttk.Label(self, text='Open hybrid.qgz in QGIS for sharp roads and labels that adapt as you zoom.\n'
-                  'GeoTIFFs have fixed labels: 10 m/pixel is the default; try 5 for smaller areas.\n'
-                  'Large GeoTIFFs render in blocks at the requested resolution; allow extra time and disk space.', wraplength=760).pack(anchor='w', pady=10)
-        ttk.Label(self, text='Geofabrik files are downloaded once and processed locally; no Overpass queries.\n'
-                  '© OpenStreetMap contributors • Data from Geofabrik • ODbL', wraplength=760).pack(anchor='w', pady=6)
+                  'Large GeoTIFFs render in blocks at your chosen metres/pixel; allow extra time and disk space.', wraplength=760).pack(anchor='w', pady=3)
+        ttk.Label(self, text='© OpenStreetMap contributors • Geofabrik • ODbL • Download once, process locally', wraplength=760).pack(anchor='w', pady=4)
         actions = ttk.Frame(self)
-        actions.pack(fill='x', pady=8)
+        actions.pack(fill='x', pady=4)
         self.run_button = ttk.Button(actions, text='Create hybrid from Geofabrik', command=self.start)
         self.run_button.pack(side='left')
         self.cancel_button = ttk.Button(actions, text='Cancel', command=self.cancel, state='disabled')
         self.cancel_button.pack(side='left', padx=8)
         self.status = tk.StringVar(value='Choose a new output folder. Satellite imagery is optional.')
-        ttk.Label(self, textvariable=self.status, wraplength=760).pack(anchor='w', pady=8)
+        self.process_display = ProcessDisplay(self, self.status)
+        self.process_display.pack(fill='x', pady=4)
         self.log = ScrolledText(self, height=12, state='disabled')
         self.log.pack(fill='both', expand=True)
+        self.process_display.log = self.log
         self.after(100, self.poll)
 
     def row(self, title, variable, command=None):
         frame = ttk.Frame(self)
-        frame.pack(fill='x', pady=5)
+        frame.pack(fill='x', pady=3)
         ttk.Label(frame, text=title, width=23).pack(side='left')
         entry = ttk.Entry(frame, textvariable=variable)
         entry.pack(side='left', fill='x', expand=True)
@@ -115,9 +119,7 @@ class HybridTab(ttk.Frame):
             self.controls.append(button)
 
     def choose(self, variable, kind):
-        if kind == 'osm':
-            path = filedialog.askopenfilename(title='Select downloaded Geofabrik PBF', filetypes=[('OSM extract', '*.pbf *.osm')])
-        elif kind == 'file':
+        if kind == 'file':
             path = filedialog.askopenfilename(filetypes=[('GeoTIFF', '*.tif *.tiff')])
         elif kind == 'output':
             # Save dialog permits a folder name which does not yet exist.
@@ -126,6 +128,22 @@ class HybridTab(ttk.Frame):
             path = filedialog.askdirectory()
         if path:
             variable.set(path)
+
+    def source_values(self):
+        return validate_sources(self.source_text.get('1.0', 'end'))
+
+    def add_source_files(self, paths=None):
+        if self.busy:
+            return
+        if paths is None:
+            paths = filedialog.askopenfilenames(title='Add OSM datasets', filetypes=[('OSM extracts', '*.pbf *.osm')])
+        lines = self.source_text.get('1.0', 'end').strip().splitlines()
+        for path in paths:
+            value = str(Path(path).resolve())
+            if value not in lines:
+                lines.append(value)
+        self.source_text.delete('1.0', 'end')
+        self.source_text.insert('1.0', '\n'.join(lines))
 
     def cancel(self):
         self.cancel_event.set()
@@ -145,7 +163,7 @@ class HybridTab(ttk.Frame):
             if not math.isfinite(resolution) or resolution <= 0:
                 raise ValueError('Enter a positive finite metres/pixel value.')
             root = self.qgis.get().strip()
-            source = validate_source(self.osm_source.get().strip())
+            sources = self.source_values()
             refresh_extract = self.refresh_extract.get()
             qgis_command(root, '')
             if not self.output.get().strip():
@@ -169,6 +187,7 @@ class HybridTab(ttk.Frame):
             messagebox.showerror('Cannot create hybrid', str(error))
             return
         self.busy = True
+        self.process_display.start('Geofabrik hybrid export')
         self.status.set('Reading full satellite TIFF coverage…' if use_tiff_bounds else f'Using bounds: {bounds.west}, {bounds.south}, {bounds.east}, {bounds.north}')
         self.cancel_event.clear()
         self.run_button.configure(state='disabled')
@@ -204,17 +223,25 @@ class HybridTab(ttk.Frame):
                 with tempfile.TemporaryDirectory(prefix='esa-hybrid-') as temporary:
                     self.cancel_path = Path(temporary) / 'cancel'
                     cache_dir = folder.parent / '.geofabrik-cache'
-                    osm_path, source_info = obtain(source, cache_dir, self.cancel_event, report, refresh=refresh_extract)
-                    report('Coverage is limited to the selected regional extract. Use a larger extract for maps crossing its boundary.')
-                    extraction = {'source': str(osm_path), 'cache_dir': str(cache_dir), 'folder': str(folder),
+                    osm_paths, source_infos = [], []
+                    for index, source in enumerate(sources, 1):
+                        report(f'Preparing Geofabrik source {index}/{len(sources)}: {source}')
+                        osm_path, source_info = obtain(source, cache_dir, self.cancel_event, report, refresh=refresh_extract)
+                        osm_paths.append(str(osm_path))
+                        source_infos.append(source_info)
+                    report('Combining selected datasets; overlapping OSM features are included once. Coverage is limited to the selected extracts.')
+                    extraction = {'sources': osm_paths, 'cache_dir': str(cache_dir), 'folder': str(folder),
                                   'bounds': vars(selected_bounds), 'cancel': str(self.cancel_path)}
                     job_path = Path(temporary) / 'job.json'
                     job_path.write_text(json.dumps(extraction), encoding='utf-8')
                     import_script = Path(getattr(sys, '_MEIPASS', Path(__file__).parent)) / 'geofabrik_worker.py'
                     self.run_worker(root, import_script, job_path, report)
-                    counts = json.loads((folder / 'extract-info.json').read_text(encoding='utf-8'))['counts']
+                    extract_info = json.loads((folder / 'extract-info.json').read_text(encoding='utf-8'))
+                    counts = extract_info['counts']
                     from datetime import datetime, timezone
-                    manifest = {'bounds': vars(selected_bounds), 'bounds_source': 'satellite TIFF' if use_tiff_bounds else 'coordinates', 'source': source_info, 'created_utc': datetime.now(timezone.utc).isoformat(),
+                    manifest = {'bounds': vars(selected_bounds), 'bounds_source': 'satellite TIFF' if use_tiff_bounds else 'coordinates',
+                                'source': source_infos[0] if len(source_infos) == 1 else {'kind': 'Multiple OSM extracts', 'sources': source_infos},
+                                'sources': source_infos, 'duplicates_removed': extract_info['duplicates_removed'], 'created_utc': datetime.now(timezone.utc).isoformat(),
                                 'attribution': ATTRIBUTION, 'license': LICENSE, 'resolution_m': resolution,
                                 'imagery': imagery, 'roads': counts['roads'], 'places': counts['places'],
                                 'coverage': 'Selected roads and settlement nodes; full intersecting ways may extend outside bounds. Rasters cover requested bounds, rounded out to the pixel grid.'}
@@ -243,7 +270,7 @@ class HybridTab(ttk.Frame):
                 self.events.put(('error', str(error)))
             finally:
                 self.cancel_path = None
-                self.events.put(('done', ''))
+                self.events.put(('done', self.process_display.stamp()))
         threading.Thread(target=work, daemon=True).start()
 
     @staticmethod
@@ -281,6 +308,7 @@ class HybridTab(ttk.Frame):
             except queue.Empty:
                 break
             if kind == 'done':
+                self.process_display.finish(message)
                 self.busy = False
                 self.run_button.configure(state='normal')
                 self.cancel_button.configure(state='disabled')
@@ -290,10 +318,7 @@ class HybridTab(ttk.Frame):
                     control.configure(state='normal')
             else:
                 self.status.set(message)
-                self.log.configure(state='normal')
-                self.log.insert('end', message + '\n')
-                self.log.see('end')
-                self.log.configure(state='disabled')
                 if kind == 'error':
                     messagebox.showerror('Hybrid map failed', message)
+        self.process_display.refresh()
         self.after(100, self.poll)
