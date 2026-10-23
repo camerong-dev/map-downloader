@@ -63,7 +63,7 @@ class ProcessDisplay(ttk.Frame):
         self.status_view = tk.StringVar(value=status.get())
         self.timing = tk.StringVar(value=self.clock.summary())
         ttk.Label(self, textvariable=self.status_view, wraplength=wraplength).pack(anchor='w')
-        ttk.Label(self, textvariable=self.timing, wraplength=wraplength).pack(anchor='w')
+        ttk.Label(self, textvariable=self.timing, wraplength=wraplength, style='Muted.TLabel').pack(anchor='w')
         self._trace = status.trace_add('write', self._status_changed)
         self.bind('<Destroy>', self._destroyed, add='+')
 

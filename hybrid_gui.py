@@ -15,6 +15,7 @@ from geofabrik import ATTRIBUTION, LICENSE, DEFAULT_SOURCE, obtain, validate_sou
 from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS
 from export_gui import CompressionControls
 from process_timing import ProcessDisplay
+from gui_style import section
 
 
 class HybridTab(ttk.Frame):
@@ -25,7 +26,7 @@ class HybridTab(ttk.Frame):
         self.events = queue.Queue()
         self.cancel_event = threading.Event()
         self.cancel_path = None
-        ttk.Label(self, text='OSM hybrid overlay', font=('Segoe UI', 17, 'bold')).pack(anchor='w')
+        ttk.Label(self, text='OSM hybrid overlay', style='Title.TLabel').pack(anchor='w')
         ttk.Label(self, text='By default, OSM covers the selected satellite TIFF, including split TIFFs.',
                   wraplength=760).pack(anchor='w', pady=4)
         self.qgis = tk.StringVar(value=find_qgis())
@@ -35,50 +36,60 @@ class HybridTab(ttk.Frame):
         self.resolution = tk.StringVar(value='10')
         self.controls = []
         self.coordinates = tk.StringVar()
-        self.row('West, south, east, north', self.coordinates)
-        ttk.Label(self, text='Four comma-separated numbers. Reversed west/east or south/north edges are sorted automatically.',
-                  wraplength=760).pack(anchor='w')
-        self.row('QGIS folder', self.qgis, lambda: self.choose(self.qgis, 'directory'))
-        source_frame = ttk.LabelFrame(self, text='Geofabrik datasets — one URL or local PBF path per line', padding=5)
+        settings = ttk.Frame(self)
+        settings.pack(fill='x', pady=(4, 8))
+        settings.columnconfigure(0, weight=1, uniform='settings')
+        settings.columnconfigure(1, weight=1, uniform='settings')
+        left = ttk.Frame(settings)
+        left.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
+        right = ttk.Frame(settings)
+        right.grid(row=0, column=1, sticky='nsew', padx=(8, 0))
+        coverage = section(left, 'Map coverage')
+        self.row('West, south, east, north', self.coordinates, parent=coverage)
+        ttk.Label(coverage, text='Four comma-separated numbers. Reversed west/east or south/north edges are sorted automatically.',
+                  wraplength=440).pack(anchor='w')
+        self.row('QGIS folder', self.qgis, lambda: self.choose(self.qgis, 'directory'), parent=left)
+        source_frame = ttk.LabelFrame(left, text='OSM sources — one URL or PBF path per line', padding=5)
         source_frame.pack(fill='x', pady=4)
-        self.source_text = ScrolledText(source_frame, height=3, width=60, wrap='none', font=('Consolas', 9))
-        self.source_text.pack(side='left', fill='x', expand=True)
+        self.source_text = ScrolledText(source_frame, height=5, width=28, wrap='none', font=('Consolas', 9))
+        self.source_text.pack(fill='x', expand=True)
         self.source_text.insert('1.0', DEFAULT_SOURCE)
         source_button = ttk.Button(source_frame, text='Add PBF files…', command=self.add_source_files)
-        source_button.pack(side='left', padx=(6, 0))
+        source_button.pack(anchor='w', pady=(6, 0))
         self.controls.extend([self.source_text, source_button])
-        refresh = ttk.Checkbutton(self, text='Refresh cached Geofabrik downloads (otherwise reuse offline)', variable=self.refresh_extract)
+        refresh = ttk.Checkbutton(left, text='Refresh cached downloads (otherwise reuse offline)', variable=self.refresh_extract)
         refresh.pack(anchor='w')
         self.controls.append(refresh)
-        ttk.Label(self, text='Remove unused lines; add the countries/regions needed to cover your map. Default: West Sussex.', wraplength=760).pack(anchor='w')
-        self.row('Satellite TIFF (optional)', self.imagery, lambda: self.choose(self.imagery, 'file'))
+        ttk.Label(left, text='Add all countries or regions needed to cover the map. Cached sources can be reused offline.', wraplength=440, style='Muted.TLabel').pack(anchor='w')
+        self.row('Satellite TIFF (optional)', self.imagery, lambda: self.choose(self.imagery, 'file'), parent=coverage)
         self.use_tiff_bounds = tk.BooleanVar(value=True)
-        extent_toggle = ttk.Checkbutton(self, text='Use full satellite TIFF bounds (overrides coordinates above)', variable=self.use_tiff_bounds)
+        extent_toggle = ttk.Checkbutton(coverage, text='Use full TIFF bounds instead of coordinates', variable=self.use_tiff_bounds)
         extent_toggle.pack(anchor='w')
         self.controls.append(extent_toggle)
-        ttk.Label(self, text='Use a rendered RGB TIFF for satellite + labels, or leave blank for an overlay only.',
-                  wraplength=760).pack(anchor='w', pady=3)
-        self.row('New output folder', self.output, lambda: self.choose(self.output, 'output'))
-        self.row('Export metres/pixel', self.resolution)
+        export = section(right, 'Output')
+        self.row('New output folder', self.output, lambda: self.choose(self.output, 'output'), parent=export)
+        self.row('Export metres/pixel', self.resolution, parent=export)
         self.render_rasters = tk.BooleanVar(value=True)
-        raster_toggle = ttk.Checkbutton(self, text='Also export fixed-resolution GeoTIFFs', variable=self.render_rasters)
+        raster_toggle = ttk.Checkbutton(export, text='Also export fixed-resolution GeoTIFFs', variable=self.render_rasters)
         raster_toggle.pack(anchor='w')
         self.controls.append(raster_toggle)
-        self.encoding = CompressionControls(self, allow_source=True)
+        self.encoding = CompressionControls(export, allow_source=True)
         self.encoding.pack(fill='x', pady=4)
-        options = ttk.LabelFrame(self, text='Roads and names to show', padding=4)
+        options = ttk.LabelFrame(right, text='Roads and names to show', padding=4)
         options.pack(fill='x', pady=5)
         self.road_groups = {}
+        road_titles = {'a_road': 'A roads / major', 'b_road': 'B roads / secondary',
+                       'local': 'Minor / residential roads'}
         for index, (key, title) in enumerate(ROAD_GROUPS.items()):
             variable = tk.BooleanVar(value=key in DEFAULT_ROADS)
             self.road_groups[key] = variable
-            button = ttk.Checkbutton(options, text=title, variable=variable)
+            button = ttk.Checkbutton(options, text=road_titles.get(key, title), variable=variable)
             button.grid(row=index // 3, column=index % 3, sticky='w', padx=5)
             self.controls.append(button)
         ttk.Label(options, text='Road labels').grid(row=2, column=0, sticky='w', padx=5)
         self.road_labels = tk.StringVar(value=ROAD_LABELS[0])
         selector = ttk.Combobox(options, textvariable=self.road_labels, values=ROAD_LABELS, state='readonly', width=20)
-        selector.grid(row=2, column=1, sticky='w', padx=5)
+        selector.grid(row=2, column=1, columnspan=2, sticky='w', padx=5)
         self.label_selector = selector
         self.city_names = tk.BooleanVar(value=True)
         self.village_names = tk.BooleanVar(value=False)
@@ -89,12 +100,12 @@ class HybridTab(ttk.Frame):
             button = ttk.Checkbutton(options, text=title, variable=variable)
             button.grid(row=3, column=column, sticky='w', padx=5)
             self.controls.append(button)
-        ttk.Label(self, text='Open hybrid.qgz in QGIS for sharp roads and labels that adapt as you zoom.\n'
-                  'Large GeoTIFFs render in blocks at your chosen metres/pixel; allow extra time and disk space.', wraplength=760).pack(anchor='w', pady=3)
+        ttk.Label(self, text='Outputs: QGIS project, transparent road overlay and optional satellite hybrid TIFF.',
+                  style='Muted.TLabel').pack(anchor='w', pady=3)
         ttk.Label(self, text='© OpenStreetMap contributors • Geofabrik • ODbL • Download once, process locally', wraplength=760).pack(anchor='w', pady=4)
         actions = ttk.Frame(self)
         actions.pack(fill='x', pady=4)
-        self.run_button = ttk.Button(actions, text='Create hybrid from Geofabrik', command=self.start)
+        self.run_button = ttk.Button(actions, text='Create hybrid map', command=self.start, style='Primary.TButton')
         self.run_button.pack(side='left')
         self.cancel_button = ttk.Button(actions, text='Cancel', command=self.cancel, state='disabled')
         self.cancel_button.pack(side='left', padx=8)
@@ -106,10 +117,10 @@ class HybridTab(ttk.Frame):
         self.process_display.log = self.log
         self.after(100, self.poll)
 
-    def row(self, title, variable, command=None):
-        frame = ttk.Frame(self)
+    def row(self, title, variable, command=None, parent=None):
+        frame = ttk.Frame(parent if parent is not None else self)
         frame.pack(fill='x', pady=3)
-        ttk.Label(frame, text=title, width=23).pack(side='left')
+        ttk.Label(frame, text=title, width=20).pack(side='left')
         entry = ttk.Entry(frame, textvariable=variable)
         entry.pack(side='left', fill='x', expand=True)
         self.controls.append(entry)

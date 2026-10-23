@@ -12,6 +12,7 @@ from mosaic_gui import MosaicTab
 from split_gui import SplitTab
 from hybrid_gui import HybridTab
 from process_timing import ProcessDisplay
+from gui_style import configure, section
 
 
 def human_size(value):
@@ -25,9 +26,10 @@ def parse_bounds(text):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('ESA Maps — Download & Merge')
-        self.geometry('850x860')
-        self.minsize(820, 820)
+        configure(self)
+        self.title('ESA Maps — Map workspace')
+        self.geometry('1140x900')
+        self.minsize(1100, 860)
         self.events = queue.Queue()
         self.cancel = threading.Event()
         self.busy = False
@@ -36,17 +38,19 @@ class App(tk.Tk):
         tabs = ttk.Notebook(self)
         tabs.pack(fill='both', expand=True)
         frame = ttk.Frame(tabs, padding=18)
-        tabs.add(frame, text='Download region')
+        tabs.add(frame, text='1  Download')
         self.mosaic = MosaicTab(tabs)
-        tabs.add(self.mosaic, text='Colour balance & merge')
+        tabs.add(self.mosaic, text='2  Colour & merge')
         self.splitter = SplitTab(tabs)
-        tabs.add(self.splitter, text='Split maps visually')
+        tabs.add(self.splitter, text='3  Split maps')
         self.hybrid = HybridTab(tabs, lambda: self.values()[0])
-        tabs.add(self.hybrid, text='OSM hybrid overlay')
-        ttk.Label(frame, text='ESA WorldCover region downloader', font=('Segoe UI', 17, 'bold')).pack(anchor='w')
+        tabs.add(self.hybrid, text='4  OSM hybrid')
+        ttk.Label(frame, text='ESA WorldCover region downloader', style='Title.TLabel').pack(anchor='w')
         ttk.Label(frame, text='Free public S3 • No account or AWS keys required • Imagery and land cover').pack(anchor='w', pady=(5, 14))
         inputs = ttk.LabelFrame(frame, text='Region — decimal degrees (WGS84)', padding=12)
         inputs.pack(fill='x')
+        inputs.columnconfigure(1, weight=1)
+        inputs.columnconfigure(3, weight=1)
         ttk.Label(inputs, text='Paste your region: west, south, east, north').grid(row=0, column=0, columnspan=4, sticky='w', pady=(0, 5))
         self.pasted_bounds = tk.StringVar(value='-61.528931,-52.484453,-57.615051,-50.934200')
         ttk.Entry(inputs, textvariable=self.pasted_bounds).grid(row=1, column=0, columnspan=3, sticky='ew', padx=5)
@@ -70,8 +74,7 @@ class App(tk.Tk):
         self.product = tk.StringVar(value=next(iter(PRODUCTS)))
         ttk.Combobox(inputs, textvariable=self.product, values=list(PRODUCTS), state='readonly', width=43).grid(row=6, column=1, columnspan=3, sticky='w')
         ttk.Label(frame, text='Original ESA tiles download in their native CRS. Merge and split outputs use EPSG:3857.').pack(anchor='w', pady=10)
-        output = ttk.Frame(frame)
-        output.pack(fill='x')
+        output = section(frame, 'Download destination')
         self.folder = tk.StringVar(value=str(Path.home() / 'Downloads' / 'ESA-WorldCover'))
         ttk.Entry(output, textvariable=self.folder).pack(side='left', fill='x', expand=True)
         ttk.Button(output, text='Output folder…', command=self.browse).pack(side='left', padx=(8, 0))
@@ -79,7 +82,7 @@ class App(tk.Tk):
         actions.pack(fill='x', pady=12)
         self.preview_button = ttk.Button(actions, text='1. Preview region', command=self.start_preview)
         self.preview_button.pack(side='left')
-        self.download_button = ttk.Button(actions, text='2. Download tiles', command=self.start_download, state='disabled')
+        self.download_button = ttk.Button(actions, text='2. Download tiles', command=self.start_download, state='disabled', style='Primary.TButton')
         self.download_button.pack(side='left', padx=8)
         self.cancel_button = ttk.Button(actions, text='Cancel', command=self.cancel.set, state='disabled')
         self.cancel_button.pack(side='left')

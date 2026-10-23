@@ -12,6 +12,7 @@ from tkinter.scrolledtext import ScrolledText
 from mosaic_runtime import find_qgis, start_worker
 from export_gui import CompressionControls
 from process_timing import ProcessDisplay
+from gui_style import section
 
 
 class MosaicTab(ttk.Frame):
@@ -21,7 +22,7 @@ class MosaicTab(ttk.Frame):
         self.files = []
         self.events = queue.Queue()
         self.cancel_path = None
-        ttk.Label(self, text='Colour balance & merge TIFFs', font=('Segoe UI', 17, 'bold')).pack(anchor='w')
+        ttk.Label(self, text='Colour balance & merge TIFFs', style='Title.TLabel').pack(anchor='w')
         ttk.Label(self, text='Output: EPSG:3857 • Full-detail 8-bit RGB GeoTIFF with transparency and viewing overviews.').pack(anchor='w', pady=8)
         runtime = ttk.Frame(self)
         runtime.pack(fill='x', pady=5)
@@ -30,7 +31,7 @@ class MosaicTab(ttk.Frame):
         ttk.Entry(runtime, textvariable=self.qgis).pack(side='left', fill='x', expand=True)
         ttk.Button(runtime, text='Browse…', command=self.browse_qgis).pack(side='left', padx=5)
         ttk.Label(self, text='Input TIFFs — first file is the reference when histogram matching is selected').pack(anchor='w', pady=(12, 4))
-        self.listbox = tk.Listbox(self, height=8, selectmode='extended')
+        self.listbox = tk.Listbox(self, height=4, selectmode='extended')
         self.listbox.pack(fill='both', expand=True)
         controls = ttk.Frame(self)
         controls.pack(fill='x', pady=8)
@@ -62,16 +63,17 @@ class MosaicTab(ttk.Frame):
         self.bands = tk.StringVar(value='1,2,3')
         ttk.Entry(bandrow, textvariable=self.bands, width=10).pack(side='left', padx=8)
         ttk.Label(options, text='RGB imagery only. All inputs must have the same CRS and pixel size. Originals are kept.').pack(anchor='w')
-        outrow = ttk.Frame(self)
-        outrow.pack(fill='x', pady=12)
+        outrow = section(self, 'Merged output')
         self.output = tk.StringVar()
-        ttk.Entry(outrow, textvariable=self.output).pack(side='left', fill='x', expand=True)
-        ttk.Button(outrow, text='Save merged TIFF…', command=self.choose_output).pack(side='left', padx=5)
-        self.encoding = CompressionControls(self)
+        pathrow = ttk.Frame(outrow)
+        pathrow.pack(fill='x')
+        ttk.Entry(pathrow, textvariable=self.output).pack(side='left', fill='x', expand=True)
+        ttk.Button(pathrow, text='Save merged TIFF…', command=self.choose_output).pack(side='left', padx=5)
+        self.encoding = CompressionControls(outrow)
         self.encoding.pack(fill='x', pady=(0, 8))
         actions = ttk.Frame(self)
         actions.pack(fill='x')
-        self.run_button = ttk.Button(actions, text='Balance colours & merge', command=self.start)
+        self.run_button = ttk.Button(actions, text='Balance colours & merge', command=self.start, style='Primary.TButton')
         self.run_button.pack(side='left')
         self.cancel_button = ttk.Button(actions, text='Cancel', command=self.cancel, state='disabled')
         self.cancel_button.pack(side='left', padx=8)

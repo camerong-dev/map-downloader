@@ -14,6 +14,18 @@ from geofabrik import DEFAULT_SOURCE
 def main():
     app = App()
     try:
+        # Check the smallest supported window, including the longer final timing
+        # summary, so the process logs remain usable on every tab.
+        app.geometry('1100x860')
+        app.update()
+        notebook = app.hybrid.master
+        for index, tab in enumerate((app, app.mosaic, app.splitter, app.hybrid)):
+            notebook.select(index)
+            tab.process_display.start('Layout check')
+            tab.process_display.finish()
+            app.update()
+            assert tab.log.winfo_height() >= 30, (index, tab.log.winfo_height())
+            assert tab.log.winfo_rooty() + tab.log.winfo_height() <= app.winfo_rooty() + app.winfo_height()
         app.withdraw()
         app.update_idletasks()
         assert app.splitter.create_overview.get()

@@ -33,7 +33,7 @@ class SplitTab(ttk.Frame):
         self.events = queue.Queue()
         self.workspace = None
         self.cancel_path = None
-        ttk.Label(self, text='Split maps visually', font=('Segoe UI', 17, 'bold')).pack(anchor='w')
+        ttk.Label(self, text='Split maps visually', style='Title.TLabel').pack(anchor='w')
         ttk.Label(self, text='EPSG:3857 preview & exports. Click the grid areas you want to export; selected areas turn yellow.').pack(anchor='w', pady=5)
         runtime = ttk.Frame(self)
         runtime.pack(fill='x', pady=4)
@@ -68,7 +68,7 @@ class SplitTab(ttk.Frame):
         self.zoom_label = tk.StringVar(value='Preview 100%')
         ttk.Label(view, textvariable=self.zoom_label).pack(side='left', padx=10)
         ttk.Label(view, text='Wheel to zoom • Drag to pan • Click to select').pack(side='left')
-        self.canvas = tk.Canvas(self, background='#23313b', height=250, highlightthickness=0)
+        self.canvas = tk.Canvas(self, background='#23313b', height=200, highlightthickness=0)
         self.canvas.pack(fill='both', expand=True, pady=8)
         self.canvas.bind('<Configure>', self.canvas_resized)
         self.canvas.bind('<ButtonPress-1>', self.pan_start)
@@ -109,7 +109,7 @@ class SplitTab(ttk.Frame):
         self.encoding.pack(fill='x', pady=5)
         bottom = ttk.Frame(self)
         bottom.pack(fill='x', pady=8)
-        self.export_button = ttk.Button(bottom, text='Export selected areas', command=self.export, state='disabled')
+        self.export_button = ttk.Button(bottom, text='Export selected areas', command=self.export, state='disabled', style='Primary.TButton')
         self.export_button.pack(side='left')
         self.cancel_button = ttk.Button(bottom, text='Cancel', command=self.cancel, state='disabled')
         self.cancel_button.pack(side='left', padx=8)

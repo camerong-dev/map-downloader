@@ -474,6 +474,11 @@ Data license: CC BY 4.0. Preserve acknowledgement when sharing maps or derived d
 
 ## Process timing
 
+The desktop workspace uses four numbered tabs: Download, Colour & merge, Split
+maps, and OSM hybrid. Blue buttons mark the main action on each tab. Hybrid
+settings group map coverage and OSM sources on the left, with output and road
+labels on the right. The process history stays below the settings.
+
 All four tabs show timestamped status messages and process logs in local time,
 including the timezone offset in the logs. Each operation shows its start time
 and a live elapsed counter. When it finishes, fails, or is cancelled, its end time
