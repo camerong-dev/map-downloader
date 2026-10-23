@@ -33,7 +33,7 @@ by this external Python launcher; install native QGIS Python packages instead.
 The desktop GUI needs a graphical desktop session. Only workers run offscreen.
 
 Paste a comma-separated bounding box in **west, south, east, north** order and click
-**Use these coordinates**, or edit the four labelled edges individually.
+**Apply**, or edit the four labelled edges individually.
 Reversed west/east or south/north edges are automatically sorted in this tab too;
 the applied coordinates and individual fields show the normalized bounds.
 For example, `-61.528931,-52.484453,-57.615051,-50.934200` sets west to
@@ -55,6 +55,45 @@ An interrupted tile is removed and restarts from the beginning on retry.
 Existing files with conflicting sizes are not overwritten. Use a separate output
 folder per running instance. Successful batches include a JSON region manifest
 with source URLs, requested bounds, tile sizes, attribution, and license.
+
+## Place search & area preview
+
+In the Download tab, enter a country, county, city or town and press **Search**
+(or Enter). Choose the correct match from the results, which include the wider
+region and country. The selected place's bounding rectangle fills the coordinate
+fields. If the service only returns a centre point, the result explicitly says
+**5 km around centre**; it is a suggested area, not the administrative boundary.
+Countries and counties without usable extents are not replaced with a small point
+area. Date-line regions still need separate downloads.
+
+Set **Buffer (km)** and click **Apply to place** to add surrounding countryside.
+Drag the street map to pan, use the wheel or +/− to zoom, and **Shift + drag** to
+draw a replacement rectangle. Pasted coordinates update the map when you click
+**Apply**. **Fit area** restores the selected area and checked tile coverage.
+
+The blue outline is the requested rectangle. Click **Preview region** to check
+ESA availability and total transfer size; orange outlines show the full available
+tiles, and the view fits both outlines. A small town can require a much larger
+tile. Downloads remain full original ESA GeoTIFFs, not street-map tiles or files
+clipped to a town boundary. Large countries may exceed the existing 400-tile
+limit; draw a smaller area or split the request.
+
+Search uses the [Photon public service](https://github.com/komoot/photon), with
+submitted searches only, cached results and serialized requests. Street preview
+tiles use [OpenStreetMap](https://operations.osmfoundation.org/policies/tiles/),
+with visible attribution, an identifying User-Agent, a minimum seven-day local
+tile cache and on-demand viewport loading. No bulk or offline street-map tile
+download is offered. Cache files are under `%LOCALAPPDATA%/ESA-Maps/preview-cache`
+on Windows or `~/.cache/ESA-Maps/preview-cache` on Linux. The preview starts without
+network access until a search, coordinate application or ESA preview is requested.
+If either preview service is unavailable, coordinate entry and ESA checks still
+work. These public services provide no availability guarantee.
+
+For another Photon-compatible service, set `ESA_MAPS_SEARCH_URL` to its HTTPS API
+endpoint. `ESA_MAPS_TILE_URL` accepts an HTTPS street-tile template with `{z}`, `{x}`
+and `{y}`. Any replacement tile provider must permit this usage and retain the
+displayed OpenStreetMap attribution. ESA downloads and Geofabrik hybrid processing
+use their existing services independently.
 
 ## Build a single Windows executable
 

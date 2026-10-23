@@ -13,6 +13,7 @@ from split_gui import SplitTab
 from hybrid_gui import HybridTab
 from process_timing import ProcessDisplay
 from gui_style import configure, section
+from region_preview import RegionPreview
 
 
 def human_size(value):
@@ -47,20 +48,27 @@ class App(tk.Tk):
         tabs.add(self.hybrid, text='4  OSM hybrid')
         ttk.Label(frame, text='ESA WorldCover region downloader', style='Title.TLabel').pack(anchor='w')
         ttk.Label(frame, text='Free public S3 • No account or AWS keys required • Imagery and land cover').pack(anchor='w', pady=(5, 14))
-        inputs = ttk.LabelFrame(frame, text='Region — decimal degrees (WGS84)', padding=12)
-        inputs.pack(fill='x')
+        region = ttk.Frame(frame)
+        region.pack(fill='both', expand=True)
+        region.columnconfigure(0, weight=1, uniform='region')
+        region.columnconfigure(1, weight=1, uniform='region')
+        inputs = ttk.LabelFrame(region, text='Region & dataset — WGS84', padding=10)
+        inputs.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
+        self.region_preview = RegionPreview(region, self.select_region)
+        self.region_preview.grid(row=0, column=1, sticky='nsew', padx=(8, 0))
         inputs.columnconfigure(1, weight=1)
         inputs.columnconfigure(3, weight=1)
         ttk.Label(inputs, text='Paste your region: west, south, east, north').grid(row=0, column=0, columnspan=4, sticky='w', pady=(0, 5))
         self.pasted_bounds = tk.StringVar(value='-61.528931,-52.484453,-57.615051,-50.934200')
         ttk.Entry(inputs, textvariable=self.pasted_bounds).grid(row=1, column=0, columnspan=3, sticky='ew', padx=5)
-        self.apply_button = ttk.Button(inputs, text='Use these coordinates', command=self.apply_bounds)
+        self.apply_button = ttk.Button(inputs, text='Apply', command=self.apply_bounds)
         self.apply_button.grid(row=1, column=3, padx=5, pady=5)
-        ttk.Label(inputs, text='Reversed edges are sorted automatically. Apply pasted coordinates, or edit the edges below.').grid(row=2, column=0, columnspan=4, sticky='w', pady=5)
+        ttk.Label(inputs, text='Reversed edges are sorted automatically. Search or draw an area on the map to fill these coordinates.',
+                  wraplength=470, style='Muted.TLabel').grid(row=2, column=0, columnspan=4, sticky='w', pady=5)
         self.coords = {}
         for i, (key, label, default) in enumerate([
-            ('west', 'West (left) longitude', '-61.528931'), ('south', 'South (bottom) latitude', '-52.484453'),
-            ('east', 'East (right) longitude', '-57.615051'), ('north', 'North (top) latitude', '-50.934200')]):
+            ('west', 'West', '-61.528931'), ('south', 'South', '-52.484453'),
+            ('east', 'East', '-57.615051'), ('north', 'North', '-50.934200')]):
             row, col = divmod(i, 2)
             row += 3
             ttk.Label(inputs, text=label).grid(row=row, column=col * 2, sticky='w', padx=5, pady=5)
@@ -72,14 +80,22 @@ class App(tk.Tk):
         ttk.Combobox(inputs, textvariable=self.year, values=['2021', '2020'], state='readonly', width=12).grid(row=5, column=1)
         ttk.Label(inputs, text='Product').grid(row=6, column=0, sticky='w', padx=5, pady=8)
         self.product = tk.StringVar(value=next(iter(PRODUCTS)))
-        ttk.Combobox(inputs, textvariable=self.product, values=list(PRODUCTS), state='readonly', width=43).grid(row=6, column=1, columnspan=3, sticky='w')
-        ttk.Label(frame, text='Original ESA tiles download in their native CRS. Merge and split outputs use EPSG:3857.').pack(anchor='w', pady=10)
+        ttk.Combobox(inputs, textvariable=self.product, values=list(PRODUCTS), state='readonly', width=30).grid(row=6, column=1, columnspan=3, sticky='ew')
+        ttk.Label(inputs, text='1. Choose a place, apply coordinates, or draw an area.\n'
+                  '2. Preview region to check tiles and total size.\n'
+                  '3. Download full ESA tiles to your chosen destination.\n\n'
+                  'The street map is for orientation. Downloads use the ESA product selected above, in its native CRS.',
+                  wraplength=470, style='Muted.TLabel').grid(row=7, column=0, columnspan=4, sticky='nw', pady=(14, 0))
+        self.region_inputs = []
+        for widget in inputs.winfo_children():
+            if widget.winfo_class() in ('TEntry', 'TCombobox'):
+                self.region_inputs.append((widget, str(widget.cget('state'))))
         output = section(frame, 'Download destination')
         self.folder = tk.StringVar(value=str(Path.home() / 'Downloads' / 'ESA-WorldCover'))
         ttk.Entry(output, textvariable=self.folder).pack(side='left', fill='x', expand=True)
         ttk.Button(output, text='Output folder…', command=self.browse).pack(side='left', padx=(8, 0))
         actions = ttk.Frame(frame)
-        actions.pack(fill='x', pady=12)
+        actions.pack(fill='x', pady=8)
         self.preview_button = ttk.Button(actions, text='1. Preview region', command=self.start_preview)
         self.preview_button.pack(side='left')
         self.download_button = ttk.Button(actions, text='2. Download tiles', command=self.start_download, state='disabled', style='Primary.TButton')
@@ -94,6 +110,9 @@ class App(tk.Tk):
         self.log = ScrolledText(frame, height=12, state='disabled', font=('Consolas', 9))
         self.log.pack(fill='both', expand=True)
         self.process_display.log = self.log
+        self.region_preview.set_region(self.values()[0], PRODUCTS[self.product.get()], online=False)
+        self.year.trace_add('write', self.dataset_changed)
+        self.product.trace_add('write', self.dataset_changed)
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.after(100, self.poll)
 
@@ -103,10 +122,17 @@ class App(tk.Tk):
             self.folder.set(folder)
 
     def apply_bounds(self):
+        if self.busy:
+            return
         try:
             bounds = parse_bounds(self.pasted_bounds.get())
         except ValueError as error:
             messagebox.showerror('Invalid coordinates', str(error))
+            return
+        self.select_region(bounds)
+
+    def select_region(self, bounds):
+        if self.busy:
             return
         for key, value in vars(bounds).items():
             self.coords[key].set(str(value))
@@ -115,6 +141,17 @@ class App(tk.Tk):
         self.selection = None
         self.download_button.configure(state='disabled')
         self.status.set('Coordinates applied. Click “1. Preview region” to check available tiles.')
+        self.region_preview.set_region(bounds, PRODUCTS[self.product.get()])
+
+    def dataset_changed(self, *_):
+        self.tiles = []
+        self.selection = None
+        self.download_button.configure(state='disabled')
+        try:
+            self.region_preview.set_region(self.values()[0], PRODUCTS[self.product.get()], online=self.region_preview.online)
+        except ValueError:
+            pass
+        self.status.set('Dataset changed. Preview the region again to check available tiles.')
 
     def values(self):
         bounds = parse_bounds(','.join(self.coords[key].get().strip()
@@ -131,6 +168,9 @@ class App(tk.Tk):
         self.download_button.configure(state='disabled')
         self.cancel_button.configure(state='normal')
         self.apply_button.configure(state='disabled')
+        self.region_preview.set_busy(True)
+        for widget, _ in self.region_inputs:
+            widget.configure(state='disabled')
         self.bar['value'] = 0
         def run():
             try:
@@ -149,6 +189,7 @@ class App(tk.Tk):
         except ValueError as error:
             messagebox.showerror('Invalid region', str(error))
             return
+        self.region_preview.set_region(selection[0], selection[2])
         self.tiles = []
         self.selection = None
         def work():
@@ -207,6 +248,7 @@ class App(tk.Tk):
                 self.selection, self.tiles = value
                 self.status.set(f'{len(self.tiles)} available tiles • {human_size(sum(t.size for t in self.tiles))} total' if self.tiles else 'No WorldCover tiles available in this region.')
                 self.process_display.append('\n'.join(f'{t.name}  {human_size(t.size)}' for t in self.tiles))
+                self.region_preview.set_tiles(self.tiles)
             elif kind == 'log':
                 self.process_display.append(value)
             elif kind == 'done':
@@ -216,6 +258,9 @@ class App(tk.Tk):
                 self.download_button.configure(state='normal' if self.tiles else 'disabled')
                 self.cancel_button.configure(state='disabled')
                 self.apply_button.configure(state='normal')
+                self.region_preview.set_busy(False)
+                for widget, state in self.region_inputs:
+                    widget.configure(state=state)
         self.process_display.refresh()
         self.after(100, self.poll)
 

@@ -3,15 +3,22 @@ from pathlib import Path
 import sys
 import tempfile
 from datetime import datetime, timezone
-from unittest.mock import Mock
+import base64
+import time
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import App
 from downloader import Bounds
 from geofabrik import DEFAULT_SOURCE
+from place_search import Place
+from downloader import Tile
 
 
-def main():
+@patch('region_preview.tile_image', return_value=base64.b64decode('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'))
+@patch('region_preview.search')
+def main(search, tile_image):
     app = App()
     try:
         # Check the smallest supported window, including the longer final timing
@@ -47,6 +54,82 @@ def main():
         app.apply_bounds()
         expected = Bounds(-0.199127, 50.966211, 0.514984, 51.109558)
         assert app.values()[0] == expected
+        picker = app.region_preview
+        assert picker.bounds == expected
+        place = Place('Horsham, West Sussex, UK', Bounds(-0.4, 51, -0.2, 51.1))
+        search.return_value = [place]
+        picker.query.set('Horsham, UK')
+        picker.find()
+        deadline = time.monotonic() + 3
+        while picker.searching and time.monotonic() < deadline:
+            app.update()
+            time.sleep(0.01)
+        assert picker.results == [place]
+        assert not picker.searching
+        picker.result.current(0)
+        picker.choose()
+        assert app.values()[0] == place.bounds
+        picker.buffer.set('10')
+        picker.choose()
+        assert app.values()[0].west < place.bounds.west
+        app.select_region(place.bounds)
+        tiles = [Tile('ESA_WorldCover_10m_2021_v200_N51W001_S2RGBNIR.tif', 'https://test/tile', 1024)]
+        with patch('app.preview', return_value=tiles):
+            app.start_preview()
+            assert not picker.enabled
+            deadline = time.monotonic() + 3
+            while app.busy and time.monotonic() < deadline:
+                app.update()
+                time.sleep(0.01)
+            assert not app.busy and picker.enabled
+        assert picker.coverage == [Bounds(-1, 51, 0, 52)]
+        assert '1 available tiles' in picker.note.get()
+        assert app.values()[0] == place.bounds  # Tile coverage must not replace the requested bounds.
+        with tempfile.TemporaryDirectory() as temporary, patch('app.download', return_value='Downloaded') as download:
+            app.folder.set(temporary)
+            app.start_download()
+            deadline = time.monotonic() + 3
+            while app.busy and time.monotonic() < deadline:
+                app.update()
+                time.sleep(0.01)
+            assert not app.busy
+            download.assert_called_once()
+            assert list(Path(temporary).glob('region-*.json'))
+        picker.set_busy(True)
+        picker.result.current(0)
+        picker.choose()
+        assert app.values()[0] == place.bounds
+        picker.set_busy(False)
+        picker.render()
+        deadline = time.monotonic() + 3
+        while picker.tile_running and time.monotonic() < deadline:
+            app.update()
+            time.sleep(0.01)
+        assert picker.images, 'Expected background tile rendering'
+        picker.press(SimpleNamespace(x=50, y=50, state=1))
+        picker.release(SimpleNamespace(x=180, y=150))
+        assert app.values()[0] != place.bounds
+        assert not picker.coverage and not app.tiles
+        selected = app.values()[0]
+        search.side_effect = OSError('offline')
+        picker.find()
+        deadline = time.monotonic() + 3
+        while picker.searching and time.monotonic() < deadline:
+            app.update()
+            time.sleep(0.01)
+        assert 'search unavailable' in picker.note.get()
+        assert app.values()[0] == selected
+        tile_image.side_effect = OSError('offline')
+        picker.render()
+        deadline = time.monotonic() + 3
+        while picker.tile_running and time.monotonic() < deadline:
+            app.update()
+            time.sleep(0.01)
+        assert 'Street map unavailable' in picker.note.get()
+        assert app.values()[0] == selected
+        app.product.set('Land-cover classification')
+        assert app.selection is None and not app.tiles
+        app.select_region(expected)
         assert hybrid.region_bounds() == expected
         hybrid.coordinates.set('0.5,51.2,-0.2,50.9')
         assert hybrid.region_bounds() == Bounds(-0.2, 50.9, 0.5, 51.2)
@@ -79,7 +162,7 @@ def main():
             display.finish()
     finally:
         app.destroy()
-    print('Desktop tab defaults, coordinate normalization and compression controls passed.')
+    print('Desktop layouts, place search, map selection, tile preview/download, timing and export defaults passed.')
 
 
 if __name__ == '__main__':
