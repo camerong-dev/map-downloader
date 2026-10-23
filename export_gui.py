@@ -4,14 +4,14 @@ from tkinter import ttk
 
 
 class CompressionControls(ttk.Frame):
-    def __init__(self, parent):
+    def __init__(self, parent, allow_source=False):
         super().__init__(parent)
-        self.compression = tk.StringVar(value='Lossless (DEFLATE)')
+        self.compression = tk.StringVar(value='Match satellite TIFF' if allow_source else 'Lossless (DEFLATE)')
         self.quality = tk.StringVar(value='85')
         self.busy = False
         ttk.Label(self, text='Export compression').pack(side='left', padx=(0, 8))
         self.combo = ttk.Combobox(self, textvariable=self.compression, state='readonly', width=24,
-                                  values=['Lossless (DEFLATE)', 'JPEG (rendered RGB)'])
+                                  values=(['Match satellite TIFF'] if allow_source else []) + ['Lossless (DEFLATE)', 'JPEG (rendered RGB)'])
         self.combo.pack(side='left')
         self.combo.bind('<<ComboboxSelected>>', lambda _: self.update_state())
         ttk.Label(self, text='JPEG quality').pack(side='left', padx=(12, 5))
@@ -28,6 +28,8 @@ class CompressionControls(ttk.Frame):
         self.update_state()
 
     def options(self):
+        if self.compression.get() == 'Match satellite TIFF':
+            return {'compression': 'SOURCE', 'jpeg_quality': 85}
         compression = 'JPEG' if self.compression.get().startswith('JPEG') else 'DEFLATE'
         quality = 85
         if compression == 'JPEG':

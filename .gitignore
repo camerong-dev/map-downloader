@@ -7,7 +7,8 @@ build/
 dist/
 *.spec
 .verification/
-corrected-hormuz-area-3857/
+.esa-osm-cache/
+.geofabrik-cache/
 diagnostic-*.png
 *.tif
 *.tiff

@@ -22,6 +22,9 @@ jobs:
           /usr/bin/python3 tests/mosaic_integration.py
           /usr/bin/python3 tests/split_integration.py
           /usr/bin/python3 tests/compression_integration.py
+          /usr/bin/python3 tests/hybrid_integration.py
+          /usr/bin/python3 tests/geofabrik_integration.py
+          /usr/bin/python3 tests/hybrid_jpeg_integration.py
       - name: Smoke-test desktop tabs
         run: |
           xvfb-run -a /usr/bin/python3 -c "from app import App; app=App(); app.withdraw(); app.update_idletasks(); assert app.splitter.create_overview.get(); assert app.splitter.overview_resolution.get() == '100'; assert app.mosaic.maximum.get() == '0.40'; app.destroy()"

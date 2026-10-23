@@ -34,6 +34,8 @@ The desktop GUI needs a graphical desktop session. Only workers run offscreen.
 
 Paste a comma-separated bounding box in **west, south, east, north** order and click
 **Use these coordinates**, or edit the four labelled edges individually.
+Reversed west/east or south/north edges are automatically sorted in this tab too;
+the applied coordinates and individual fields show the normalized bounds.
 For example, `-61.528931,-52.484453,-57.615051,-50.934200` sets west to
 `-61.528931`, south to `-52.484453`, east to `-57.615051`, and north to `-50.934200`.
 The supplied example is preloaded on startup.
@@ -158,6 +160,154 @@ after completion or cancellation. Allow ample free space for both the intermedia
 and final mosaic, potentially several times the input size. Cancellation is cooperative
 and can wait for the current GDAL operation. Existing output files are never overwritten.
 The packaged GUI still requires QGIS on the destination computer; it does not bundle QGIS.
+
+## OSM hybrid overlay
+
+The **OSM hybrid overlay** tab uses regional [Geofabrik OSM extracts](https://download.geofabrik.de/)
+and processes roads and settlement names locally. The road styling, labels,
+transparency and EPSG:3857 outputs use the same renderer as before. There are no
+Overpass queries in this workflow.
+
+It extracts data for the full selected satellite TIFF by default. Without a TIFF, or with **Use full
+satellite TIFF bounds** unchecked, it uses coordinates pasted directly into the tab,
+or the WGS84 edges entered on **Download region** when the local coordinate box is blank. Reversed longitude or
+latitude edges are automatically sorted, and the box shows the normalized bounds.
+For example, `0.514984,50.966211,-0.199127,51.109558` becomes
+`-0.199127,50.966211,0.514984,51.109558`. Regions crossing the date line must still
+be split into two downloads. It creates an offline hybrid style with outlined roads, white labels with
+dark halos, curved road names, and scale-dependent city/town/village labels.
+This is an independent OSM-based hybrid map style; coverage and appearance differ
+from Google Maps. It does not download Google imagery or Google map labels.
+
+1. Paste **west,south,east,north** in the OSM tab, or leave it blank to use **Download region**.
+2. Open **OSM hybrid overlay** and check the QGIS folder.
+   The **Geofabrik URL / local PBF** field defaults to West Sussex. Paste another
+   Geofabrik `.osm.pbf` download URL, or browse to a previously downloaded local
+   `.osm.pbf` file. Local `.osm` XML files are also supported. To find extracts,
+   use the [Geofabrik download catalogue](https://download.geofabrik.de/).
+   **Choose an extract covering all the land in your requested area.** For a map
+   crossing county boundaries, select a larger region such as England. Selecting
+   a TIFF changes the extraction bounds, not the geographical coverage of the PBF.
+3. Optionally select a **rendered 8-bit RGB satellite TIFF** created by **Colour
+   balance & merge**. Raw reflectance and categorical inputs are rejected. Leave
+   this field empty to create the transparent overlay only. **Use full satellite
+   TIFF bounds** is enabled by default: selecting a merged or split TIFF extracts
+   OSM for that file's entire rectangular extent within the source extract, regardless of the coordinate box
+   or original download region. Uncheck it to deliberately use manual coordinates.
+4. Choose a **new output folder** and export spacing in EPSG:3857 metres/pixel.
+   The default is **10**; use **5** for smaller areas where you want local road
+   names. The full-detail vector project is always created. Enabled raster exports
+   write a single GeoTIFF per output using bounded render blocks, with BigTIFF for
+   large files. The former 32-million-pixel / 16384-pixel-edge skip limits no longer
+   apply. Requested pixel spacing is preserved. Large regions need more processing
+   time and disk space; choose coarser spacing explicitly for a smaller file, or
+   disable GeoTIFFs to create the vector project only.
+   **Export compression** defaults to **Match satellite TIFF**: a JPEG satellite
+   TIFF produces a JPEG hybrid at its recorded quality (85 if unspecified); other
+   inputs produce a lossless DEFLATE hybrid. You can explicitly choose lossless or
+   JPEG and set its quality. The separate road overlay always uses lossless RGBA
+   DEFLATE. JPEG hybrids store three RGB bands plus a lossless internal binary mask,
+   keeping transparent gaps without an external mask file. JPEG is lossy, including
+   the baked labels, so use the lossless overlay or vector project for exact text
+   edges. The satellite image is re-encoded when labels are baked in; files are
+   not concatenated and the hybrid size is not the sum of its two source file sizes.
+5. Click **Create hybrid from Geofabrik**. The app downloads the regional PBF once,
+   verifies it against Geofabrik's MD5 checksum, and imports only roads and settlement
+   nodes into a spatially indexed local GeoPackage. Later runs reuse the import and
+   select data for each merged or split TIFF locally. You do not need to manage the
+   GeoPackage manually.
+
+**Roads and names to show** controls both the QGIS project and the exported
+GeoTIFFs. Motorways/M roads, A roads, B roads and other main roads are enabled by
+default. Minor/residential/service roads are off. Other main roads means OSM
+`tertiary` and its links; unnumbered country lanes (`unclassified`) are included
+with the optional minor roads group. Numbered M/A/B `ref` tags take priority over
+the OSM road class, with motorway/trunk/primary/secondary classes as fallbacks.
+This follows the [UK OSM road mapping conventions](https://wiki.openstreetmap.org/wiki/Roads_in_the_United_Kingdom);
+outside the UK the class-based fallbacks still apply.
+
+Road labels can show **Numbers and names**, **Numbers only**, **Names only**, or
+be **Off**. City/town names are on by default; village names and hamlets/suburbs
+are optional. Scale limits and collision avoidance still control which names fit
+on the map. Raw GeoJSON keeps all downloaded road and settlement data; these
+settings control what is displayed. To create another styled export, select the
+options and choose a new output folder in the same parent folder; matching cached
+downloads and imports are reused.
+
+Outputs:
+
+- `roads.geojson` and `places.geojson`: reusable WGS84 vectors. Includes drivable
+  road classes and settlement **nodes** (cities, towns, villages, hamlets, suburbs).
+  Footpaths, buildings, boundaries and other OSM features are outside this download's scope.
+  Full intersecting road geometries may extend beyond the requested bounds.
+  This is a filtered regional extract, not a complete OSM database.
+- `hybrid.qgz`: QGIS project with styled offline vectors. Labels adapt to scale
+  and collisions as you zoom. Keep the GeoJSON files beside the project. If satellite
+  imagery was selected, keep it at its original location relative to the project.
+- `overlay.tif`: transparent EPSG:3857 RGBA overlay and matching QGIS `.qml` style.
+- `hybrid.tif`: satellite image with roads and labels baked in, when a satellite
+  TIFF was supplied, plus matching `.qml`. Its pixel spacing is the selected export
+  spacing, which may be coarser than the source satellite image. It includes only
+  the requested region, rounded outward by less than one pixel east/south.
+- `osm-manifest.json` and `ATTRIBUTION.txt`: source, bounds, counts, date and credit.
+
+GeoTIFF labels are fixed at the export scale; they cannot change when zooming. For
+different label detail, export another resolution or use the vector QGIS project.
+OSM vector data itself has no raster pixel resolution. In QGIS, open `hybrid.qgz`
+to keep roads and text sharp at every zoom; loading only `hybrid.tif` displays the
+fixed-resolution raster and will become blurry when enlarged. Uncheck **Also export
+fixed-resolution GeoTIFFs** if only the vector project is needed.
+Label collision handling deliberately omits some names. Imagery coverage gaps remain
+transparent, although roads and labels may still appear over those gaps. Hybrid
+GeoTIFFs can be loaded into **Split maps visually**; baked labels then remain fixed.
+These exports do not add MBTiles or ATAK packaging.
+
+Large rasters are rendered in blocks of up to 4096 × 4096 output pixels, with
+surrounding context for road-label placement, then written to exact pixel windows
+in one output TIFF. No split files need assembling. The log reports block progress
+and overview creation. Label placement is calculated per padded block, so some
+labels near block boundaries may differ from an interactive QGIS view; pixel
+coverage and satellite alignment remain continuous. For example, a 55660 × 35385
+RGBA map has about 7.3 GiB of pixel data before compression and overviews **per
+output**; actual file sizes depend on compression and image content.
+JPEG satellite files can grow substantially when exported using lossless DEFLATE,
+because lossless encoding preserves their decoded pixels rather than their original
+JPEG bitstream. Match-source compression avoids that unintended change of codec.
+Existing outputs are never overwritten. Cancellation removes the current incomplete TIFF
+and keeps completed files and the vector project.
+
+Regional downloads and indexed imports are saved in `.geofabrik-cache` beside the
+output folder. They have no automatic expiry: the log and manifest record the
+download date. Check **Refresh cached Geofabrik download** to fetch a fresh snapshot,
+or replace a local PBF with a newer download. Existing outputs are kept. The old
+`.esa-osm-cache` is unused by the hybrid tab and may be removed when no longer needed.
+Changing output parents uses a separate cache; to work fully offline, reuse the
+same parent or browse directly to your existing PBF. A local PBF is never downloaded
+or refreshed by the app.
+
+Large country extracts need time and extra disk space for their first import.
+The worker scans the regional PBF for roads and settlements, then subsequent bbox
+queries use the local spatial indexes. No Overpass request-count or feature-count
+limits apply. A region outside the selected source can have missing roads; an
+entirely empty result is reported explicitly. Regions crossing ±180° must be split,
+and hybrid output supports latitudes from -85° to 85°.
+Cancellation waits for the current network read (40-second socket timeout), GDAL
+import operation, or QGIS render. Completed downloads, imports and outputs remain;
+choose a new output folder for another run. Interrupted downloads/imports are removed
+and restart on retry. No online tiles are needed to view downloaded data.
+
+OSM data is licensed under the [ODbL](https://opendatacommons.org/licenses/odbl/1-0/).
+Exports show **© OpenStreetMap contributors** with the copyright URL; preserve this
+credit and the accompanying license information when sharing. Satellite source
+attribution must also be preserved; the original ESA download manifest contains its
+year-specific credit. See [OpenStreetMap attribution requirements](https://www.openstreetmap.org/copyright).
+
+`tests/test_geofabrik.py` tests source validation, checksum verification, offline
+cache reuse and refresh. `tests/geofabrik_integration.py` checks local import,
+spatial selection, road attributes, cache reuse, rendering and cancellation.
+`tests/hybrid_integration.py` runs under QGIS Python and
+checks rendering, georeferencing, transparency, project reload and output protection
+using synthetic offline data.
 
 ## Split maps visually
 

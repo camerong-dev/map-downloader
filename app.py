@@ -7,9 +7,11 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
-from downloader import Bounds, Cancelled, PRODUCTS, download, preview
+from downloader import Cancelled, PRODUCTS, download, preview
+from osm_download import parse_region
 from mosaic_gui import MosaicTab
 from split_gui import SplitTab
+from hybrid_gui import HybridTab
 
 
 def human_size(value):
@@ -17,15 +19,7 @@ def human_size(value):
 
 
 def parse_bounds(text):
-    parts = text.strip().split(',')
-    if len(parts) != 4:
-        raise ValueError('Paste four comma-separated numbers: west, south, east, north.')
-    try:
-        bounds = Bounds(*(float(part.strip()) for part in parts))
-    except ValueError:
-        raise ValueError('Use decimal numbers separated by commas, for example -61.528931,-52.484453,-57.615051,-50.934200.')
-    bounds.validate()
-    return bounds
+    return parse_region(text)
 
 
 class App(tk.Tk):
@@ -47,6 +41,8 @@ class App(tk.Tk):
         tabs.add(self.mosaic, text='Colour balance & merge')
         self.splitter = SplitTab(tabs)
         tabs.add(self.splitter, text='Split maps visually')
+        self.hybrid = HybridTab(tabs, lambda: self.values()[0])
+        tabs.add(self.hybrid, text='OSM hybrid overlay')
         ttk.Label(frame, text='ESA WorldCover region downloader', font=('Segoe UI', 17, 'bold')).pack(anchor='w')
         ttk.Label(frame, text='Free public S3 • No account or AWS keys required • Imagery and land cover').pack(anchor='w', pady=(5, 14))
         inputs = ttk.LabelFrame(frame, text='Region — decimal degrees (WGS84)', padding=12)
@@ -56,7 +52,7 @@ class App(tk.Tk):
         ttk.Entry(inputs, textvariable=self.pasted_bounds).grid(row=1, column=0, columnspan=3, sticky='ew', padx=5)
         self.apply_button = ttk.Button(inputs, text='Use these coordinates', command=self.apply_bounds)
         self.apply_button.grid(row=1, column=3, padx=5, pady=5)
-        ttk.Label(inputs, text='Click “Use these coordinates”, or edit the individual edges below.').grid(row=2, column=0, columnspan=4, sticky='w', pady=5)
+        ttk.Label(inputs, text='Reversed edges are sorted automatically. Apply pasted coordinates, or edit the edges below.').grid(row=2, column=0, columnspan=4, sticky='w', pady=5)
         self.coords = {}
         for i, (key, label, default) in enumerate([
             ('west', 'West (left) longitude', '-61.528931'), ('south', 'South (bottom) latitude', '-52.484453'),
@@ -109,17 +105,17 @@ class App(tk.Tk):
             return
         for key, value in vars(bounds).items():
             self.coords[key].set(str(value))
+        self.pasted_bounds.set(','.join(str(value) for value in vars(bounds).values()))
         self.tiles = []
         self.selection = None
         self.download_button.configure(state='disabled')
         self.status.set('Coordinates applied. Click “1. Preview region” to check available tiles.')
 
     def values(self):
-        try:
-            bounds = Bounds(**{key: float(var.get().strip()) for key, var in self.coords.items()})
-        except ValueError:
-            raise ValueError('Enter decimal coordinates, for example -0.6 or 51.2.')
-        bounds.validate()
+        bounds = parse_bounds(','.join(self.coords[key].get().strip()
+                                      for key in ('west', 'south', 'east', 'north')))
+        for key, value in vars(bounds).items():
+            self.coords[key].set(str(value))
         return bounds, int(self.year.get()), PRODUCTS[self.product.get()]
 
     def launch(self, work):
@@ -222,6 +218,9 @@ class App(tk.Tk):
         self.after(100, self.poll)
 
     def close(self):
+        if self.hybrid.busy:
+            self.hybrid.cancel()
+            return
         if self.splitter.busy:
             self.splitter.cancel()
             return
