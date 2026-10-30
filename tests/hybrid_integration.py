@@ -70,13 +70,27 @@ with tempfile.TemporaryDirectory(prefix='hybrid-test-') as temporary:
     project = QgsProject.instance()
     project.clear()
     assert project.read(str(folder / 'hybrid.qgz'))
-    assert len(project.mapLayers()) == 7
+    assert len(project.mapLayers()) == 4  # Empty display classes are skipped.
     assert all(layer.isValid() for layer in project.mapLayers().values())
+    assert all('.fgb' in layer.source() for layer in project.mapLayers().values() if isinstance(layer, QgsVectorLayer))
     assert any(layer.labelsEnabled() for layer in project.mapLayers().values() if hasattr(layer, 'labelsEnabled'))
     from hybrid_style import ROAD_GROUPS
     assert not any(layer.name() == ROAD_GROUPS['local'] for layer in project.mapLayers().values())
     b_roads = next(layer for layer in project.mapLayers().values() if layer.name() == ROAD_GROUPS['b_road'])
     assert [f['ref'] for f in b_roads.getFeatures()] == ['B1234']
+    project.clear()
+    # Indexed feature traversal must preserve the original paint/label order.
+    from unittest.mock import patch
+    reference_folder = folder / 'geojson-reference'
+    reference_folder.mkdir()
+    for name in ('roads.geojson', 'places.geojson'):
+        (reference_folder / name).write_bytes((folder / name).read_bytes())
+    sources = {name: str(reference_folder / f'{name}.geojson') for name in ('roads', 'places')}
+    with patch('hybrid_worker.prepare_render_data', return_value=sources), patch('hybrid_worker.preserve_feature_order'):
+        run(dict(job, folder=str(reference_folder)))
+    reference = gdal.Open(str(reference_folder / 'hybrid.tif'))
+    np.testing.assert_array_equal(reference.ReadAsArray(), hybrid_pixels)
+    reference = None
     project.clear()
     enlarged_folder = folder / 'enlarged'
     enlarged_folder.mkdir()
@@ -193,4 +207,6 @@ with tempfile.TemporaryDirectory(prefix='hybrid-test-') as temporary:
     assert not list(cancelled.glob('.*.part.tif'))
     assert not list(cancelled.glob('.*.block.png'))
     project.clear()
+    from qgis.core import QgsApplication
+    QgsApplication.exitQgis()
 print('Hybrid integration passed: georeferencing, alpha, rendering, project reload.')

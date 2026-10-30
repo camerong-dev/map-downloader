@@ -9,7 +9,7 @@ from osgeo import gdal
 from geofabrik_worker import extract, import_extract
 from hybrid_worker import run
 from osm_fixtures import collections
-from qgis.core import QgsProject
+from qgis.core import QgsProject, QgsApplication
 
 with tempfile.TemporaryDirectory(prefix='geofabrik-test-') as temporary:
     root = Path(temporary)
@@ -156,6 +156,16 @@ with tempfile.TemporaryDirectory(prefix='geofabrik-test-') as temporary:
         pass
     assert not (failed / 'roads.geojson').exists()
     assert cached.exists()
+    outside = root / 'outside'
+    outside.mkdir()
+    try:
+        extract(dict(job, folder=str(outside), bounds={'west': -62, 'south': -52, 'east': -57, 'north': -50}))
+        raise AssertionError('Non-overlapping export area was accepted')
+    except ValueError as error:
+        assert 'does not overlap' in str(error)
+        assert 'Export area: west -62.00000' in str(error)
+        assert 'OSM data bounds:' in str(error)
+    assert not list(outside.glob('*.geojson')), 'Overlap check must run before extraction'
     cancel = root / 'cancel'
     cancel.touch()
     try:
@@ -165,4 +175,5 @@ with tempfile.TemporaryDirectory(prefix='geofabrik-test-') as temporary:
         raise AssertionError('Cancellation was ignored')
     except InterruptedError:
         pass
+    QgsApplication.exitQgis()
 print('Geofabrik integration passed: single/multiple sources, border deduplication, cache reuse, styling, split bounds and cancellation.')

@@ -40,7 +40,7 @@ class App(tk.Tk):
         self.tabs = tabs
         tabs.pack(fill='both', expand=True)
         self.pages = []
-        for title in ('1  Download', '2  Colour & merge', '3  Split maps', '4  OSM hybrid'):
+        for title in ('1  Download', '2  Colour & merge', '3  Split maps', '4  OSM hybrid', '5  OSM maps'):
             page = ScrollablePage(tabs)
             tabs.add(page, text=title)
             self.pages.append(page)
@@ -49,7 +49,8 @@ class App(tk.Tk):
         self.mosaic = MosaicTab(self.pages[1].content)
         self.splitter = SplitTab(self.pages[2].content)
         self.hybrid = HybridTab(self.pages[3].content, lambda: self.values()[0])
-        for tab in (self.mosaic, self.splitter, self.hybrid):
+        self.osm = HybridTab(self.pages[4].content, lambda: self.hybrid.current_area(), pure_osm=True)
+        for tab in (self.mosaic, self.splitter, self.hybrid, self.osm):
             tab.pack(fill='x')
         ttk.Label(frame, text='ESA WorldCover region downloader', style='Title.TLabel').pack(anchor='w')
         ttk.Label(frame, text='Free public S3 • No account or AWS keys required • Imagery and land cover').pack(anchor='w', pady=(5, 14))
@@ -270,6 +271,9 @@ class App(tk.Tk):
         self.after(100, self.poll)
 
     def close(self):
+        if self.osm.busy:
+            self.osm.cancel()
+            return
         if self.hybrid.busy:
             self.hybrid.cancel()
             return

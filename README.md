@@ -529,12 +529,12 @@ Data license: CC BY 4.0. Preserve acknowledgement when sharing maps or derived d
 
 ## Process timing
 
-The desktop workspace uses four numbered tabs: Download, Colour & merge, Split
-maps, and OSM hybrid. Blue buttons mark the main action on each tab. Hybrid
+The desktop workspace uses five numbered tabs: Download, Colour & merge, Split
+maps, OSM hybrid, and OSM maps. Blue buttons mark the main action on each tab. Hybrid
 settings group map coverage and OSM sources on the left, with output and road
 labels on the right. The process history stays below the settings.
 
-All four tabs show timestamped status messages and process logs in local time,
+All five tabs show timestamped status messages and process logs in local time,
 including the timezone offset in the logs. Each operation shows its start time
 and a live elapsed counter. When it finishes, fails, or is cancelled, its end time
 and total duration remain visible. Each tab keeps its own timing and log history
@@ -593,3 +593,80 @@ scrolling. **Progress & log ↓** jumps to the larger log at the bottom, and
 **Top ↑** returns to the settings. Keyboard focus brings off-screen controls into
 view. The download map spans the page width, both map previews are taller, and
 logs show at least twelve lines without squeezing the map to fit the window.
+
+## Standalone OSM maps
+
+The **5 OSM maps** tab creates a street map with no satellite imagery or transparent
+hybrid overlay. It renders local OSM vector data using an offline style inspired
+by the OpenStreetMap website: light land, blue water, green parks/woodland, coloured
+roads, buildings, railways, paths and dark labels. It is a simplified independent
+style, rather than a copy of the website's full cartography or POI catalogue.
+
+1. Enter west, south, east, north, or click **Use hybrid area**. This resolves the
+   hybrid tab's current coordinates or full satellite TIFF bounds, according to
+   that tab's coverage setting. Or use **Use TIFF area** to select a map directly,
+   or **Load saved map area** to open a previous `osm-manifest.json`. The chosen
+   coordinates are displayed below the buttons. An area must be selected explicitly;
+   adding a PBF supplies data and does not choose the export area.
+2. Choose Geofabrik extracts or local PBF files covering that area. The downloads
+   and cache location work the same way as the hybrid tab. The first pure-map run
+   builds a separate, richer local database including polygons and waterways.
+3. Choose a new output folder. Start with **2 m/pixel** for a local map, **1** for
+   finer rendering, or **5–10** for larger regions. Pixel spacing is in EPSG:3857
+   metres; this output is independent of the satellite's 10 m pixels. Finer output
+   and larger areas increase file size and processing time.
+4. Choose road groups, names, **OSM size**, and **Prefer English names**. Lossless
+   **DEFLATE** is the default for crisp text and linework; JPEG is also available.
+5. Click **Create OSM map**. It writes one `osm.tif` with an opaque background,
+   georeferencing, attribution and viewing overviews, plus `osm.qml` and the
+   editable `osm.qgz` project. Keep the accompanying indexed vector and GeoJSON files with the project.
+   No `overlay.tif` or satellite hybrid is created.
+
+Map detail depends on the OSM features present in the selected extracts. Coastal
+sea is derived from directed OSM coastlines; extracts must contain complete
+coastline segments through the requested area. An incomplete coastline that does
+not divide or enclose the area is reported in the log and sea fill is skipped.
+Areas without coastline or water polygons use the land background. English names
+fall back to local names. Rendering streams through bounded blocks into one TIFF,
+including for large areas; cancellation keeps completed downloads and imports.
+
+If OSM extraction reports no features, check the displayed export area against
+source coverage. Source feature bounds and requested coordinates are logged, and
+`osm-job.json` records the job even if extraction fails. A non-overlapping area is
+rejected before empty GeoJSON files are created. GDAL polygon warnings can occur
+while importing some incomplete OSM rings; if the import completes, they do not
+by themselves explain an empty road/settlement selection. Use the corrected area
+and a new output folder to retry; completed downloads/imports are reused.
+
+### Renderer performance
+
+Both hybrid and standalone OSM exports first build spatially indexed `roads.fgb`
+and `places.fgb` files. Standalone OSM additionally indexes `map_lines.fgb` and
+`map_areas.fgb`. These FlatGeobuf files are created for nonempty source collections. This
+adds a preparation step and disk space, but lets each render block request nearby
+features rather than repeatedly scanning the full GeoJSON data. Keep these files
+with `osm.qgz` or `hybrid.qgz` when moving the project. The original GeoJSON
+collections are retained. Feature drawing and label order are preserved.
+
+Both OSM and hybrid exports transfer rendered RGBA pixels directly from Qt to GDAL,
+avoiding temporary PNG encoding, writing, reading and decoding for every block.
+TIFF compression can use up to four threads while map rendering remains bounded
+by the block size. Each completed block reports its duration and an estimate for
+the remaining rendering; building viewing overviews is a separate final step.
+Resolution, map styles, internal JPEG masks and lossless output pixels are
+preserved. An export already running continues with the renderer it started with;
+the improvements apply when a new export is launched from the updated app.
+
+### OSM map appearance
+
+Pure OSM maps use a light warm background, softly shaded residential areas, muted
+parks/woodland, blue water and contrasting building outlines. Streets have wider
+fills and subtle casings, with major routes above minor streets and joined road
+surfaces at intersections. Place names have a clearer size hierarchy and thinner
+white halos; named parks, woodland and water areas can be labelled when space
+allows. Buildings drop out at wider map scales to reduce clutter.
+
+Use **100% OSM size** as a starting point, and enable **Minor / residential roads**
+for a complete local street network. The revised appearance applies when generating
+new pure OSM maps; regenerate existing TIFFs to update their baked-in styling.
+Hybrid maps retain their satellite-overlay style.

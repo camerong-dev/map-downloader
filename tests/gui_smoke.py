@@ -26,7 +26,7 @@ def main(search, tile_image):
         app.geometry('1100x700')
         app.update()
         notebook = app.tabs
-        for index, tab in enumerate((app, app.mosaic, app.splitter, app.hybrid)):
+        for index, tab in enumerate((app, app.mosaic, app.splitter, app.hybrid, app.osm)):
             notebook.select(index)
             tab.process_display.start('Layout check')
             tab.process_display.finish()
@@ -175,9 +175,67 @@ def main(search, tile_image):
         hybrid.coordinates.set('0.5,51.2,-0.2,50.9')
         assert hybrid.region_bounds() == Bounds(-0.2, 50.9, 0.5, 51.2)
         assert hybrid.coordinates.get() == '-0.2,50.9,0.5,51.2'
+        app.osm.coordinates.set('')
+        try:
+            app.osm.region_bounds()
+            raise AssertionError('Pure OSM silently inherited an unselected area')
+        except ValueError as error:
+            assert 'Choose an export area first' in str(error)
+        assert 'No export area chosen' in app.osm.area_summary.get()
+        app.osm.copy_area()
+        assert app.osm.region_bounds() == hybrid.region_bounds()
+        assert app.osm.resolution.get() == '2'
+        assert app.osm.pure_osm and app.osm.prefer_english.get()
+        assert app.osm.encoding.options()['compression'] == 'DEFLATE'
+        assert all(variable.get() for variable in app.osm.road_groups.values())
+        assert not app.osm.imagery.get()
+        with patch('hybrid_gui.start_worker') as worker:
+            worker.return_value.communicate.return_value = ('{"bounds": {"west": 1, "south": 50, "east": 2, "north": 51}}', None)
+            worker.return_value.returncode = 0
+            hybrid.imagery.set('fixture.tif')
+            app.osm.copy_area()
+            assert app.osm.region_bounds() == Bounds(1, 50, 2, 51)
+            hybrid.imagery.set('')
+            with patch('hybrid_gui.filedialog.askopenfilename', return_value='fixture.tif'):
+                app.osm.copy_tiff_area()
+                assert app.osm.region_bounds() == Bounds(1, 50, 2, 51)
+        # Exercise the GUI-to-worker contract without any network or GIS work.
+        import json
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            saved = root / 'osm-manifest.json'
+            saved.write_text(json.dumps({'bounds': {'west': 34, 'south': 31, 'east': 35, 'north': 32}}))
+            with patch('hybrid_gui.filedialog.askopenfilename', return_value=str(saved)):
+                app.osm.copy_saved_area()
+            assert app.osm.region_bounds() == Bounds(34, 31, 35, 32)
+            assert 'west 34.00000' in app.osm.area_summary.get()
+            source = root / 'fixture.pbf'
+            source.write_bytes(b'fixture')
+            calls = []
+            def fake_worker(qgis, script, job_path, report):
+                job = json.loads(Path(job_path).read_text())
+                calls.append(job)
+                assert job['map_mode'] == 'osm'
+                if Path(script).name == 'geofabrik_worker.py':
+                    info = {'counts': {'roads': 1, 'places': 1, 'map_areas': 1, 'map_lines': 1},
+                            'duplicates_removed': {'roads': 0, 'places': 0, 'map_areas': 0, 'map_lines': 0}}
+                    (Path(job['folder']) / 'extract-info.json').write_text(json.dumps(info))
+                else:
+                    assert job['imagery'] == '' and job['resolution'] == 2
+                    assert job['compression'] == 'DEFLATE' and job['prefer_english']
+            app.osm.output.set(str(root / 'map'))
+            with patch('hybrid_gui.obtain', return_value=(source, {'kind': 'fixture'})), patch.object(app.osm, 'run_worker', side_effect=fake_worker):
+                app.osm.start()
+                deadline = time.monotonic() + 5
+                while app.osm.busy and time.monotonic() < deadline:
+                    app.update()
+                    time.sleep(.01)
+                assert not app.osm.busy and len(calls) == 2
+                assert json.loads((root / 'map' / 'osm-manifest.json').read_text())['display']['map_mode'] == 'osm'
+
         # All tabs share timestamped status/log behavior and independently freeze
         # elapsed time on completion, including a failed/cancelled operation.
-        for tab in (app, app.mosaic, app.splitter, app.hybrid):
+        for tab in (app, app.mosaic, app.splitter, app.hybrid, app.osm):
             display = tab.process_display
             display.clock.monotonic = Mock(return_value=100)
             display.clock.now = Mock(return_value=datetime(2026, 10, 23, 15, 0, tzinfo=timezone.utc))

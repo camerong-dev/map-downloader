@@ -2,6 +2,22 @@
 import re
 import math
 
+# Muted land colours leave contrast for streets, buildings and names.
+OSM_COLOURS = {
+    'land': '#f7f5ef', 'water': '#a8cee0', 'park': '#d9e8c6',
+    'woodland': '#bad3b1', 'farmland': '#f2efd9', 'industrial': '#ebe4eb',
+    'residential': '#f2f0eb', 'sand': '#f4e6bf', 'building': '#d3c6b8',
+    'building_edge': '#baa997',
+}
+# Widths are millimetres at the renderer's DPI, independent of source imagery.
+OSM_ROADS = {
+    'motorway': ('#e9a1ad', '#bd7585', 3.0, 10),
+    'a_road': ('#f5c98b', '#c29b62', 2.3, 10),
+    'b_road': ('#f7e4ad', '#c3b17f', 1.9, 9),
+    'main': ('#ffffff', '#c6beb0', 1.45, 9),
+    'local': ('#ffffff', '#d1cabf', 1.0, 8),
+}
+
 
 def osm_display_scale(value):
     scale = float(value)
