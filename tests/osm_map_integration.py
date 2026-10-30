@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix='osm-map-test-') as temporary:
     folder.mkdir()
     job = {'sources': [str(source)], 'folder': str(folder), 'cache_dir': str(root / 'cache'),
            'bounds': {'west': 0, 'south': 51, 'east': .02, 'north': 51.02},
-           'cancel': str(root / 'cancel'), 'map_mode': 'osm', 'resolution': 2, 'compression': 'DEFLATE'}
+           'cancel': str(root / 'cancel'), 'map_mode': 'osm', 'terrain_enabled': False, 'resolution': 2, 'compression': 'DEFLATE'}
     extract(job)
     areas = json.loads((folder / 'map_areas.geojson').read_text())['features']
     assert len(areas) == 3
@@ -129,6 +129,41 @@ with tempfile.TemporaryDirectory(prefix='osm-map-test-') as temporary:
     town = next(layer for layer in project.mapLayers().values() if layer.name() == 'Town')
     text = town.labeling().settings().format()
     assert text.color().lightness() > 150 and text.buffer().color().lightness() < 80
+    project.clear()
+    # Terrain changes land while roads, buildings and water retain their style.
+    terrain_dem = root / 'terrain-source.tif'
+    dem = gdal.GetDriverByName('GTiff').Create(str(terrain_dem),128,128,1,gdal.GDT_Float32)
+    from osgeo import osr
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(3857)
+    dem.SetProjection(srs.ExportToWkt())
+    dem.SetGeoTransform((gt[0]-200,(data.shape[2]*2+400)/128,0,gt[3]+200,0,-(data.shape[1]*2+400)/128))
+    yy,xx = np.indices((128,128))
+    dem.GetRasterBand(1).WriteArray((400+250*np.sin(xx/10)*np.cos(yy/12)).astype(np.float32))
+    dem.GetRasterBand(1).SetUnitType('m')
+    dem.Close()
+    shaded_folder = root / 'shaded'
+    shaded_folder.mkdir()
+    for name in ('roads','places','map_lines','map_areas'):
+        (shaded_folder / f'{name}.geojson').write_bytes((folder / f'{name}.geojson').read_bytes())
+    run(dict(job,folder=str(shaded_folder),osm_style='Dark',terrain_enabled=True,
+             terrain_dem=str(terrain_dem),terrain_contours=True))
+    shaded = gdal.Open(str(shaded_folder / 'osm.tif'))
+    previous = data.copy()
+    data = shaded.ReadAsArray()
+    assert np.count_nonzero(data[:3] != previous[:3]) > 100
+    np.testing.assert_array_equal(colour(.001,51.019),[16,45,66])
+    np.testing.assert_array_equal(colour(.004,51.003),[52,65,77])
+    np.testing.assert_array_equal(colour(.018,51.005),[204,170,118])
+    assert (shaded_folder / 'terrain-info.json').is_file()
+    assert (shaded_folder / 'terrain_relief.tif').is_file()
+    shaded = None
+    project.clear()
+    assert project.read(str(shaded_folder / 'osm.qgz'))
+    assert all(layer.isValid() for layer in project.mapLayers().values())
+    names = [layer.name() for layer in project.layerTreeRoot().customLayerOrder()]
+    assert names.index('Water') < names.index('Terrain relief')
+    assert names.index('Buildings') < names.index('Terrain relief')
     project.clear()
     from qgis.core import QgsApplication
     QgsApplication.exitQgis()

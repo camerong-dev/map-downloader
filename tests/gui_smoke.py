@@ -188,6 +188,10 @@ def main(search, tile_image):
         assert app.osm.region_bounds() == hybrid.region_bounds()
         assert app.osm.resolution.get() == '2'
         assert app.osm.pure_osm and app.osm.prefer_english.get()
+        assert not hasattr(app.osm, 'terrain_controls')
+        assert app.osm.terrain_options()['terrain_enabled']
+        assert app.osm.terrain_options()['terrain_strength'] == 0.4
+        assert not app.hybrid.terrain_options()['terrain_enabled']
         assert app.osm.map_style.get() == 'Light'
         assert app.osm.style_selector is not None and app.hybrid.style_selector is None
         app.osm.map_style.set('Dark')
@@ -232,6 +236,8 @@ def main(search, tile_image):
                     assert job['imagery'] == '' and job['resolution'] == 2
                     assert job['compression'] == 'DEFLATE' and job['prefer_english']
                     assert job['osm_style'] == 'Dark'
+                    assert job['terrain_enabled'] and not job['terrain_contours']
+                    assert job['terrain_dem'] == ''
             app.osm.output.set(str(root / 'invalid-map'))
             with patch.object(app.osm.encoding, 'options', side_effect=ValueError('Invalid encoding')), patch('hybrid_gui.messagebox.showerror') as error:
                 app.osm.start()

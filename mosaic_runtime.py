@@ -13,7 +13,7 @@ _launch_lock = threading.Lock()
 
 WORKER_RESOURCES = (
     'mosaic_worker.py', 'split_worker.py', 'hybrid_worker.py', 'hybrid_style.py',
-    'geofabrik_worker.py', 'raster_output.py', 'map_plan.py',
+    'geofabrik_worker.py', 'raster_output.py', 'map_plan.py', 'terrain.py',
 )
 
 

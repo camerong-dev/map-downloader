@@ -19,6 +19,7 @@ from qgis.PyQt.QtGui import QColor, QFont, QFontDatabase, QPainter, QImage
 from raster_output import finish_output, write_rgb_style, compression_options
 from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS, osm_display_scale, osm_style
 from map_plan import MapPlan, projected_plan
+from terrain import TerrainOptions, terrain_layers, TERRAIN_CREDIT
 
 _application = None
 FONT = 'Arial' if sys.platform == 'win32' else 'DejaVu Sans'
@@ -206,6 +207,8 @@ def render_raster(name, selected, settings, extent, width, height, resolution, f
         for index, interpretation in enumerate(interpretations, 1):
             result.GetRasterBand(index).SetColorInterpretation(interpretation)
         result.SetMetadataItem('ATTRIBUTION', '© OpenStreetMap contributors; https://www.openstreetmap.org/copyright')
+        if name == 'osm' and job.get('terrain_enabled'):
+            result.SetMetadataItem('TERRAIN_ATTRIBUTION', TERRAIN_CREDIT if not job.get('terrain_dem') else 'Local elevation dataset; see terrain-info.json')
         result.SetMetadataItem('OSM_LICENSE', 'https://opendatacommons.org/licenses/odbl/1-0/')
         result.SetMetadataItem('EXPORT_RESOLUTION_M', str(resolution))
         if name == 'osm':
@@ -236,7 +239,9 @@ def render_raster(name, selected, settings, extent, width, height, resolution, f
                     painter.setFont(QFont(FONT, 9))
                     painter.setPen(QColor('white'))
                     painter.fillRect(-x, height - 24 - y, min(width, 560), 24, QColor(20, 25, 20, 210))
-                    painter.drawText(8 - x, height - 8 - y, '© OpenStreetMap contributors · openstreetmap.org/copyright')
+                    credit = ('© OpenStreetMap contributors · Terrain: Mapzen' if name == 'osm' and job.get('terrain_enabled') and not job.get('terrain_dem')
+                              else '© OpenStreetMap contributors · openstreetmap.org/copyright')
+                    painter.drawText(8 - x, height - 8 - y, credit)
                     painter.end()
                 write_rendered_image(result, image, x, y, jpeg)
                 completed = row * cols + col + 1
@@ -384,6 +389,10 @@ def basemap_layers(folder, project, job, display_scale, sources):
 def run(job):
     folder = Path(job['folder'])
     pure_osm = job.get('map_mode') == 'osm'
+    if pure_osm:
+        # Default for every entry point; explicit options remain available to internal GIS tests.
+        job = {**TerrainOptions(enabled=True).job_options(), **job}
+        TerrainOptions.from_job(job)
     colours, road_styles = osm_style(job.get('osm_style', 'Light') if pure_osm else 'Light')
     for name in ('osm.qgz', 'osm.tif', 'osm.qml', 'hybrid.qgz', 'overlay.tif', 'hybrid.tif', 'overlay.qml', 'hybrid.qml'):
         if (folder / name).exists():
@@ -484,10 +493,20 @@ def run(job):
     if pure_osm:
         road_rank = {title: i for i, title in enumerate(ROAD_GROUPS.values())}
         layers.sort(key=lambda layer: road_rank.get(layer.name(), -1))
-        layers += basemap_layers(folder, project, job, display_scale, sources)
+        basemap = basemap_layers(folder, project, job, display_scale, sources)
         sea = coastline_water(folder, project, extent, job, sources)
+        water = [layer for layer in basemap if layer.name() == 'Water']
         if sea is not None:
-            layers.append(sea)
+            water.append(sea)
+        terrain = terrain_layers(folder, extent, project, job, emit, water_layers=water)
+        if terrain:
+            # Water/buildings shield the relief; streets and their labels stay
+            # above it. Shading still shows through the land-use colours.
+            upper = [layer for layer in basemap if layer.name() in ('Railways','Waterways','Coastlines','Paths and tracks','Buildings','Water')]
+            lower = [layer for layer in basemap if layer not in upper]
+            layers += upper + ([sea] if sea is not None else []) + terrain + lower
+        else:
+            layers += basemap + ([sea] if sea is not None else [])
     satellite = None
     if job.get('imagery') and not pure_osm:
         source = gdal.Open(job['imagery'])

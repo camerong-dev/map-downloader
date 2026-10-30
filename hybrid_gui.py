@@ -16,6 +16,7 @@ from export_gui import CompressionControls
 from process_timing import ProcessDisplay
 from gui_style import section
 from map_plan import geographic_plan
+from terrain import TerrainOptions
 
 
 class HybridTab(ttk.Frame):
@@ -179,6 +180,10 @@ class HybridTab(ttk.Frame):
         except ValueError as error:
             self.export_estimate.set(str(error))
 
+    def terrain_options(self):
+        # Pure OSM always receives automatic, subtle relief without extra UI.
+        return TerrainOptions(enabled=self.pure_osm).job_options()
+
     def copy_area(self):
         if self.busy:
             return
@@ -316,6 +321,7 @@ class HybridTab(ttk.Frame):
             render_rasters = self.render_rasters.get()
             encoding = self.encoding.options()
             display = {'map_mode': 'osm' if self.pure_osm else 'hybrid',
+                       **self.terrain_options(),
                        'road_groups': [key for key, variable in self.road_groups.items() if variable.get()],
                        'osm_scale': osm_scale,
                        'osm_style': self.map_style.get(),
@@ -407,6 +413,13 @@ class HybridTab(ttk.Frame):
                     job_path.write_text(json.dumps(job), encoding='utf-8')
                     script = worker_script('hybrid_worker.py')
                     self.run_worker(root, script, job_path, report)
+                    terrain_info = folder / 'terrain-info.json'
+                    if terrain_info.is_file():
+                        manifest['terrain'] = json.loads(terrain_info.read_text(encoding='utf-8'))
+                        (folder / 'osm-manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+                        with (folder / 'ATTRIBUTION.txt').open('a', encoding='utf-8') as credit:
+                            credit.write('\nTerrain: ' + manifest['terrain']['attribution'] + '\n')
+                            credit.write('See terrain-info.json and TERRAIN_ATTRIBUTION.md for source details.\n')
             except Cancelled:
                 report('Cancelled. Completed outputs are kept; choose a new folder for another run.')
             except Exception as error:

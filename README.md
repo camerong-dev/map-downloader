@@ -698,3 +698,24 @@ a shared Geofabrik download instead of writing the same partial file concurrentl
 
 See [the application review](docs/application-review.md) for the refactors,
 verification evidence and prioritised follow-ups.
+
+### Automatic terrain relief
+
+Pure OSM maps automatically include subtle multidirectional hill shading beneath
+roads, buildings and labels, in both Light and Dark styles. Shading uses a fixed
+40% strength; water stays flat and clear. There are no terrain controls or extra
+setup steps. Contour lines are not added by default.
+
+Elevation is downloaded in the background from public
+[Mapzen Terrain Tiles on AWS](https://registry.opendata.aws/terrain-tiles/).
+No account or API key is required. Downloads are cached in `.terrain-cache`
+next to the output folders and reused on subsequent exports. The first export
+needs internet access for elevation and source attribution. Larger areas use a
+coarser terrain grid to keep processing bounded.
+
+The final result is still one `osm.tif`; the accompanying `osm.qgz` retains the
+relief layer for editing. Keep the project data together, including
+`terrain_elevation.tif`, `terrain_relief.tif`, `terrain_relief.qml`,
+`terrain-info.json` and `TERRAIN_ATTRIBUTION.md`. The export manifest records the
+terrain source. Elevation detail follows the source data; a 2 m map export does
+not create 2 m elevation measurements.
