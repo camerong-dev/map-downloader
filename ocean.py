@@ -89,6 +89,8 @@ def download_archive(cache, job, emit):
 
 
 def process_alive(pid):
+    if pid <= 0 or pid > 0xffffffff:
+        return False
     if os.name == 'nt':
         import ctypes
         from ctypes import wintypes
@@ -108,8 +110,11 @@ def process_alive(pid):
     try:
         os.kill(pid, 0)
         return True
-    except ProcessLookupError:
+    except (ProcessLookupError, OverflowError):
         return False
+    except PermissionError:
+        # A process owned by another user can exist without being signalable.
+        return True
 
 
 def prepare_ocean_source(cache, job, emit):

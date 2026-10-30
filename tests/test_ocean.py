@@ -86,3 +86,20 @@ class OceanTests(unittest.TestCase):
     def test_process_probe_does_not_terminate_current_worker(self):
         self.assertTrue(process_alive(os.getpid()))
         self.assertFalse(process_alive(4294967294))
+
+    def test_posix_process_probe_handles_pid_overflow_and_permissions(self):
+        with patch('ocean.os.name','posix'):
+            for error, expected in ((OverflowError('signed integer is greater than maximum'),False),
+                                    (ProcessLookupError(),False),(PermissionError(),True)):
+                with self.subTest(error=type(error).__name__), patch('ocean.os.kill',side_effect=error) as kill:
+                    self.assertEqual(process_alive(4294967294),expected)
+                    kill.assert_called_once_with(4294967294,0)
+            with patch('ocean.os.kill',return_value=None) as kill:
+                self.assertTrue(process_alive(123))
+                kill.assert_called_once_with(123,0)
+
+    def test_invalid_pids_never_probe_process_groups_or_wrap_on_windows(self):
+        with patch('ocean.os.kill') as kill:
+            for pid in (0,-1,-123,2**32,2**64):
+                self.assertFalse(process_alive(pid))
+            kill.assert_not_called()
