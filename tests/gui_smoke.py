@@ -186,6 +186,9 @@ def main(search, tile_image):
         assert app.osm.region_bounds() == hybrid.region_bounds()
         assert app.osm.resolution.get() == '2'
         assert app.osm.pure_osm and app.osm.prefer_english.get()
+        assert app.osm.map_style.get() == 'Light'
+        assert app.osm.style_selector is not None and app.hybrid.style_selector is None
+        app.osm.map_style.set('Dark')
         assert app.osm.encoding.options()['compression'] == 'DEFLATE'
         assert all(variable.get() for variable in app.osm.road_groups.values())
         assert not app.osm.imagery.get()
@@ -223,6 +226,7 @@ def main(search, tile_image):
                 else:
                     assert job['imagery'] == '' and job['resolution'] == 2
                     assert job['compression'] == 'DEFLATE' and job['prefer_english']
+                    assert job['osm_style'] == 'Dark'
             app.osm.output.set(str(root / 'map'))
             with patch('hybrid_gui.obtain', return_value=(source, {'kind': 'fixture'})), patch.object(app.osm, 'run_worker', side_effect=fake_worker):
                 app.osm.start()

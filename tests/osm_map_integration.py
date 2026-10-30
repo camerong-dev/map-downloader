@@ -108,6 +108,28 @@ with tempfile.TemporaryDirectory(prefix='osm-map-test-') as temporary:
     assert np.all(jpeg.GetRasterBand(1).GetMaskBand().ReadAsArray() == 255)
     jpeg = None
     project.clear()
+    dark_folder = root / 'dark'
+    dark_folder.mkdir()
+    for name in ('roads', 'places', 'map_lines', 'map_areas'):
+        (dark_folder / f'{name}.geojson').write_bytes((folder / f'{name}.geojson').read_bytes())
+    run(dict(job, folder=str(dark_folder), osm_style='Dark'))
+    dark = gdal.Open(str(dark_folder / 'osm.tif'))
+    assert dark.GetMetadataItem('OSM_MAP_STYLE') == 'Dark'
+    data = dark.ReadAsArray()
+    gt = dark.GetGeoTransform()
+    assert np.all(data[3] == 255)
+    np.testing.assert_array_equal(colour(.001, 51.019), [16, 45, 66])
+    np.testing.assert_array_equal(colour(.019, 51.019), [21, 28, 36])
+    np.testing.assert_array_equal(colour(.004, 51.003), [52, 65, 77])
+    np.testing.assert_array_equal(colour(.018, 51.005), [204, 170, 118])
+    dark = None
+    project.clear()
+    assert project.read(str(dark_folder / 'osm.qgz'))
+    assert project.backgroundColor().name() == '#151c24'
+    town = next(layer for layer in project.mapLayers().values() if layer.name() == 'Town')
+    text = town.labeling().settings().format()
+    assert text.color().lightness() > 150 and text.buffer().color().lightness() < 80
+    project.clear()
     from qgis.core import QgsApplication
     QgsApplication.exitQgis()
     print('Pure OSM integration passed: import, cache, buildings, water, woodland, opaque TIFF, georeferencing and project reload.')

@@ -12,7 +12,7 @@ from tkinter.scrolledtext import ScrolledText
 from downloader import Bounds, Cancelled, parse_region
 from mosaic_runtime import find_qgis, qgis_command, start_worker
 from geofabrik import ATTRIBUTION, LICENSE, DEFAULT_SOURCE, obtain, validate_sources
-from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS, osm_display_scale
+from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS, osm_display_scale, OSM_STYLES
 from export_gui import CompressionControls
 from process_timing import ProcessDisplay
 from gui_style import section
@@ -119,6 +119,13 @@ class HybridTab(ttk.Frame):
         self.size_selector = ttk.Combobox(options, textvariable=self.osm_size,
                                         values=['100%', '150%', '200%', '300%', '400%'], state='readonly', width=8)
         self.size_selector.grid(row=4, column=1, sticky='w', padx=5)
+        self.map_style = tk.StringVar(value='Light')
+        self.style_selector = None
+        if pure_osm:
+            ttk.Label(options, text='Map style').grid(row=5, column=0, sticky='w', padx=5, pady=5)
+            self.style_selector = ttk.Combobox(options, textvariable=self.map_style, values=OSM_STYLES,
+                                              state='readonly', width=12)
+            self.style_selector.grid(row=5, column=1, sticky='w', padx=5)
         self.prefer_english = tk.BooleanVar(value=True)
         english = ttk.Checkbutton(options, text='Prefer English names', variable=self.prefer_english)
         english.grid(row=4, column=2, sticky='w', padx=5)
@@ -299,6 +306,7 @@ class HybridTab(ttk.Frame):
             display = {'map_mode': 'osm' if self.pure_osm else 'hybrid',
                        'road_groups': [key for key, variable in self.road_groups.items() if variable.get()],
                        'osm_scale': osm_scale,
+                       'osm_style': self.map_style.get(),
                        'prefer_english': self.prefer_english.get(),
                        'road_labels': self.road_labels.get(),
                        'place_types': (['city', 'town'] if self.city_names.get() else [])
@@ -315,6 +323,8 @@ class HybridTab(ttk.Frame):
         self.cancel_button.configure(state='normal')
         self.label_selector.configure(state='disabled')
         self.size_selector.configure(state='disabled')
+        if self.style_selector is not None:
+            self.style_selector.configure(state='disabled')
         self.encoding.set_busy(True)
         for control in self.controls:
             control.configure(state='disabled')
@@ -443,6 +453,8 @@ class HybridTab(ttk.Frame):
                 self.cancel_button.configure(state='disabled')
                 self.label_selector.configure(state='readonly')
                 self.size_selector.configure(state='readonly')
+                if self.style_selector is not None:
+                    self.style_selector.configure(state='readonly')
                 self.encoding.set_busy(False)
                 for control in self.controls:
                     control.configure(state='normal')

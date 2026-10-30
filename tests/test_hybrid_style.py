@@ -1,9 +1,19 @@
 import unittest
 
-from hybrid_style import road_group, DEFAULT_ROADS, osm_display_scale
+from hybrid_style import road_group, DEFAULT_ROADS, osm_display_scale, osm_style
 
 
 class RoadDisplayTests(unittest.TestCase):
+    def test_theme_validation_and_isolation(self):
+        light, light_roads = osm_style()
+        dark, dark_roads = osm_style('Dark')
+        self.assertEqual(set(light), set(dark))
+        self.assertEqual(set(light_roads), set(dark_roads))
+        self.assertNotEqual(light['land'], dark['land'])
+        self.assertIs(osm_style()[0], light)
+        with self.assertRaises(ValueError):
+            osm_style('Unknown')
+
     def test_osm_size_range(self):
         for value in (1, 1.5, 2, 3, 4):
             self.assertEqual(osm_display_scale(value), value)

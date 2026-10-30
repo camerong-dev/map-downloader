@@ -670,3 +670,13 @@ Use **100% OSM size** as a starting point, and enable **Minor / residential road
 for a complete local street network. The revised appearance applies when generating
 new pure OSM maps; regenerate existing TIFFs to update their baked-in styling.
 Hybrid maps retain their satellite-overlay style.
+
+### Dark OSM maps
+
+In **5 OSM maps**, choose **Map style → Dark** for a charcoal map with muted green
+land areas, deep blue water, lighter buildings, pale labels and warm major roads.
+The default **Light** style remains available. The choice applies to both `osm.tif`
+and `osm.qgz`, and is recorded in the export manifest and TIFF metadata. Road
+selection, English names, OSM size and pixel spacing work with either style.
+Regenerate existing TIFFs to apply a different style. Hybrid overlays retain their
+own styling.

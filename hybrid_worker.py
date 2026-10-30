@@ -17,7 +17,7 @@ from qgis.PyQt.QtCore import QSize
 from qgis.PyQt.QtGui import QColor, QFont, QFontDatabase, QPainter, QImage
 
 from raster_output import finish_output, write_rgb_style, compression_options
-from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS, osm_display_scale, OSM_COLOURS, OSM_ROADS
+from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS, osm_display_scale, osm_style
 
 _application = None
 FONT = 'Arial' if sys.platform == 'win32' else 'DejaVu Sans'
@@ -63,7 +63,7 @@ def inspect_imagery(path):
             'east': gt[0] + view.RasterXSize * gt[1], 'north': gt[3]}
 
 
-def labels(layer, size, priority, road=False, mode='Numbers and names', display_scale=1, prefer_english=True, dark=False, area=False, colour=None):
+def labels(layer, size, priority, road=False, mode='Numbers and names', display_scale=1, prefer_english=True, dark=False, area=False, colour=None, palette=None):
     settings = QgsPalLayerSettings()
     settings.fieldName = 'coalesce(nullif("name",\'\'), "ref")'
     if road:
@@ -85,11 +85,11 @@ def labels(layer, size, priority, road=False, mode='Numbers and names', display_
     bold = not road and (not dark or priority >= 9)
     text.setFont(QFont(FONT, round(size), QFont.Weight.Bold if bold else QFont.Weight.Normal))
     text.setSize(size)
-    text.setColor(QColor(colour or ('#38434a' if dark else '#ffffff')))
+    text.setColor(QColor(colour or (palette['text'] if palette else '#38434a' if dark else '#ffffff')))
     halo = QgsTextBufferSettings()
     halo.setEnabled(True)
     halo.setSize((0.35 if dark else 0.7) * display_scale)
-    halo.setColor(QColor('#ffffff' if dark else '#253127'))
+    halo.setColor(QColor(palette['halo'] if palette else '#ffffff' if dark else '#253127'))
     text.setBuffer(halo)
     settings.setFormat(text)
     layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
@@ -208,6 +208,8 @@ def render_raster(name, selected, settings, extent, width, height, resolution, f
         result.SetMetadataItem('ATTRIBUTION', '© OpenStreetMap contributors; https://www.openstreetmap.org/copyright')
         result.SetMetadataItem('OSM_LICENSE', 'https://opendatacommons.org/licenses/odbl/1-0/')
         result.SetMetadataItem('EXPORT_RESOLUTION_M', str(resolution))
+        if name == 'osm':
+            result.SetMetadataItem('OSM_MAP_STYLE', job.get('osm_style', 'Light'))
         settings.setLayers(selected)
         for row, y in enumerate(range(0, height, block)):
             for col, x in enumerate(range(0, width, block)):
@@ -261,6 +263,7 @@ def coastline_water(folder, project, extent, job, sources):
     """Close OSM's directed coastline lines against the requested map boundary."""
     if not has_matching_features(sources['map_lines'], "natural = 'coastline'"):
         return None
+    colours, _ = osm_style(job.get('osm_style', 'Light'))
     source = QgsVectorLayer(sources['map_lines'], 'Coastline source', 'ogr')
     if not source.isValid():
         return None
@@ -318,7 +321,7 @@ def coastline_water(folder, project, extent, job, sources):
     layer = QgsVectorLayer(str(target), 'Sea', 'ogr')
     if not layer.isValid():
         raise RuntimeError('Could not load coastal water areas.')
-    layer.setRenderer(QgsSingleSymbolRenderer(QgsFillSymbol.createSimple({'color': OSM_COLOURS['water'], 'outline_style': 'no'})))
+    layer.setRenderer(QgsSingleSymbolRenderer(QgsFillSymbol.createSimple({'color': colours['water'], 'outline_style': 'no'})))
     project.addMapLayer(layer)
     return layer
 
@@ -326,20 +329,21 @@ def coastline_water(folder, project, extent, job, sources):
 def basemap_layers(folder, project, job, display_scale, sources):
     """Offline street-map background; layer order is topmost first."""
     layers = []
+    colours, _ = osm_style(job.get('osm_style', 'Light'))
     # Draw polygons below streets, with buildings above land use and water.
     styles = [
-        ('map_lines', 'Railways', "railway IN ('rail','light_rail','subway','tram')", '#8b8b86', 0.28, 300000, True),
-        ('map_lines', 'Waterways', "waterway IN ('river','stream','canal','drain')", OSM_COLOURS['water'], 0.55, 750000, False),
-        ('map_lines', 'Coastlines', "natural = 'coastline'", '#87b2c7', 0.16, 20000000, False),
-        ('roads', 'Paths and tracks', "highway IN ('path','footway','cycleway','track','steps','pedestrian')", '#b49c83', 0.3, 60000, True),
-        ('map_areas', 'Buildings', "building != '' AND building != 'no'", OSM_COLOURS['building'], 0.1, 35000, False),
-        ('map_areas', 'Water', "natural IN ('water','bay') OR water != '' OR landuse = 'reservoir'", OSM_COLOURS['water'], 0, 20000000, False),
-        ('map_areas', 'Parks and grass', "leisure IN ('park','garden','golf_course','pitch','recreation_ground') OR landuse IN ('grass','meadow','recreation_ground','village_green') OR natural IN ('grassland','heath')", OSM_COLOURS['park'], 0, 3000000, False),
-        ('map_areas', 'Woodland', "landuse = 'forest' OR natural IN ('wood','scrub')", OSM_COLOURS['woodland'], 0, 10000000, False),
-        ('map_areas', 'Farmland', "landuse IN ('farmland','farmyard','orchard','vineyard')", OSM_COLOURS['farmland'], 0, 3000000, False),
-        ('map_areas', 'Industrial and commercial', "landuse IN ('industrial','commercial','retail')", OSM_COLOURS['industrial'], 0, 1000000, False),
-        ('map_areas', 'Residential areas', "landuse = 'residential'", OSM_COLOURS['residential'], 0, 2000000, False),
-        ('map_areas', 'Sand and beaches', "natural IN ('sand','beach')", OSM_COLOURS['sand'], 0, 3000000, False),
+        ('map_lines', 'Railways', "railway IN ('rail','light_rail','subway','tram')", colours['rail'], 0.28, 300000, True),
+        ('map_lines', 'Waterways', "waterway IN ('river','stream','canal','drain')", colours['water'], 0.55, 750000, False),
+        ('map_lines', 'Coastlines', "natural = 'coastline'", colours['coast'], 0.16, 20000000, False),
+        ('roads', 'Paths and tracks', "highway IN ('path','footway','cycleway','track','steps','pedestrian')", colours['path'], 0.3, 60000, True),
+        ('map_areas', 'Buildings', "building != '' AND building != 'no'", colours['building'], 0.1, 35000, False),
+        ('map_areas', 'Water', "natural IN ('water','bay') OR water != '' OR landuse = 'reservoir'", colours['water'], 0, 20000000, False),
+        ('map_areas', 'Parks and grass', "leisure IN ('park','garden','golf_course','pitch','recreation_ground') OR landuse IN ('grass','meadow','recreation_ground','village_green') OR natural IN ('grassland','heath')", colours['park'], 0, 3000000, False),
+        ('map_areas', 'Woodland', "landuse = 'forest' OR natural IN ('wood','scrub')", colours['woodland'], 0, 10000000, False),
+        ('map_areas', 'Farmland', "landuse IN ('farmland','farmyard','orchard','vineyard')", colours['farmland'], 0, 3000000, False),
+        ('map_areas', 'Industrial and commercial', "landuse IN ('industrial','commercial','retail')", colours['industrial'], 0, 1000000, False),
+        ('map_areas', 'Residential areas', "landuse = 'residential'", colours['residential'], 0, 2000000, False),
+        ('map_areas', 'Sand and beaches', "natural IN ('sand','beach')", colours['sand'], 0, 3000000, False),
     ]
     for source, name, expression, colour, stroke, scale, dashed in styles:
         check(job)
@@ -361,7 +365,7 @@ def basemap_layers(folder, project, job, display_scale, sources):
         layer.setScaleBasedVisibility(True)
         layer.setMinimumScale(scale * display_scale)
         if source == 'map_areas':
-            symbol = QgsFillSymbol.createSimple({'color': colour, 'outline_color': OSM_COLOURS['building_edge'],
+            symbol = QgsFillSymbol.createSimple({'color': colour, 'outline_color': colours['building_edge'],
                 'outline_style': 'solid' if stroke else 'no', 'outline_width': str(stroke * display_scale)})
         else:
             symbol = QgsLineSymbol.createSimple({'line_color': colour, 'line_width': str(stroke * display_scale),
@@ -371,7 +375,7 @@ def basemap_layers(folder, project, job, display_scale, sources):
         if name in ('Water', 'Parks and grass', 'Woodland'):
             labels(layer, 9, 4 if name == 'Water' else 3, display_scale=display_scale,
                    prefer_english=job.get('prefer_english', True), dark=True, area=True,
-                   colour='#397a99' if name == 'Water' else '#587452')
+                   colour=colours['water_label'] if name == 'Water' else colours['park_label'], palette=colours)
         project.addMapLayer(layer)
         layers.append(layer)
     return layers
@@ -380,6 +384,7 @@ def basemap_layers(folder, project, job, display_scale, sources):
 def run(job):
     folder = Path(job['folder'])
     pure_osm = job.get('map_mode') == 'osm'
+    colours, road_styles = osm_style(job.get('osm_style', 'Light') if pure_osm else 'Light')
     for name in ('osm.qgz', 'osm.tif', 'osm.qml', 'hybrid.qgz', 'overlay.tif', 'hybrid.tif', 'overlay.qml', 'hybrid.qml'):
         if (folder / name).exists():
             raise FileExistsError(f'{name} already exists. Choose a new output folder.')
@@ -399,7 +404,7 @@ def run(job):
     project.setFileName(str(folder / project_file))
     crs = QgsCoordinateReferenceSystem('EPSG:3857')
     project.setCrs(crs)
-    project.setBackgroundColor(QColor(OSM_COLOURS['land']) if pure_osm else QColor('white'))
+    project.setBackgroundColor(QColor(colours['land']) if pure_osm else QColor('white'))
     b = job['bounds']
     extent = QgsCoordinateTransform(QgsCoordinateReferenceSystem('EPSG:4326'), crs, project).transformBoundingBox(
         QgsRectangle(b['west'], b['south'], b['east'], b['north']))
@@ -452,7 +457,7 @@ def run(job):
             casing_extra = 0.35
             if pure_osm:
                 group = next(group for group, title in ROAD_GROUPS.items() if title == name)
-                color, casing, stroke, size = OSM_ROADS[group]
+                color, casing, stroke, size = road_styles[group]
                 casing_extra = 0.5 if group in ('motorway', 'a_road') else 0.35
             joins = {'capstyle': 'round', 'joinstyle': 'round'} if pure_osm else {}
             symbol = QgsLineSymbol.createSimple({'line_color': casing,
@@ -471,7 +476,7 @@ def run(job):
         preserve_feature_order(layer)
         if source != 'roads' or label_mode != 'Off':
             labels(layer, size, priority, source == 'roads', label_mode, display_scale,
-                   job.get('prefer_english', True), dark=pure_osm)
+                   job.get('prefer_english', True), dark=pure_osm, palette=colours if pure_osm else None)
         project.addMapLayer(layer)
         layers.insert(0, layer)
     if pure_osm:
@@ -508,7 +513,7 @@ def run(job):
     settings.setTransformContext(project.transformContext())
     settings.setExtent(extent)
     settings.setOutputDpi(96)
-    settings.setBackgroundColor(QColor(OSM_COLOURS['land']) if pure_osm else QColor(0, 0, 0, 0))
+    settings.setBackgroundColor(QColor(colours['land']) if pure_osm else QColor(0, 0, 0, 0))
     outputs = [('osm', layers)] if pure_osm else [('overlay', layers)] + ([('hybrid', ordered)] if satellite else [])
     for name, selected in outputs:
         render_raster(name, selected, settings, extent, width, height, resolution, folder, job)
