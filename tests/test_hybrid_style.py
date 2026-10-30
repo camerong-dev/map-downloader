@@ -1,9 +1,16 @@
 import unittest
 
-from hybrid_style import road_group, DEFAULT_ROADS
+from hybrid_style import road_group, DEFAULT_ROADS, osm_display_scale
 
 
 class RoadDisplayTests(unittest.TestCase):
+    def test_osm_size_range(self):
+        for value in (1, 1.5, 2, 3, 4):
+            self.assertEqual(osm_display_scale(value), value)
+        for value in (0, 0.5, 4.1, float('nan'), float('inf')):
+            with self.assertRaises(ValueError):
+                osm_display_scale(value)
+
     def test_numbered_roads_and_classification_fallback(self):
         examples = [({'highway': 'motorway_link'}, 'motorway'),
                     ({'highway': 'primary', 'ref': 'M23'}, 'motorway'),

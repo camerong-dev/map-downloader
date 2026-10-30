@@ -25,7 +25,7 @@ def import_extract(source, cache_dir, job):
     check(job)
     source = Path(source).resolve()
     stat = source.stat()
-    key = hashlib.sha256(f'v1:{source}:{stat.st_size}:{stat.st_mtime_ns}'.encode()).hexdigest()[:24]
+    key = hashlib.sha256(f'v2-english:{source}:{stat.st_size}:{stat.st_mtime_ns}'.encode()).hexdigest()[:24]
     target = Path(cache_dir) / f'{key}.gpkg'
     if target.exists():
         emit(f'Reusing local road/place database: {target}')
@@ -34,8 +34,8 @@ def import_extract(source, cache_dir, job):
     config = partial.with_suffix('.ini')
     header = '[general]\n' if int(gdal.VersionInfo('VERSION_NUM')) >= 3100000 else ''
     config.write_text(header + 'closed_ways_are_polygons=building,landuse,natural,amenity\n'
-                      '[points]\nosm_id=yes\nattributes=name,place\nother_tags=no\n'
-                      '[lines]\nosm_id=yes\nattributes=name,ref,highway\nother_tags=no\n'
+                      '[points]\nosm_id=yes\nattributes=name,name:en,place\nother_tags=no\n'
+                      '[lines]\nosm_id=yes\nattributes=name,name:en,ref,highway\nother_tags=no\n'
                       '[multipolygons]\nother_tags=no\n[multilinestrings]\nother_tags=no\n[other_relations]\nother_tags=no\n', encoding='utf-8')
     previous = gdal.GetConfigOption('OSM_CONFIG_FILE')
     gdal.SetConfigOption('OSM_CONFIG_FILE', str(config))
@@ -43,8 +43,8 @@ def import_extract(source, cache_dir, job):
     places = "'city','town','village','hamlet','suburb'"
     try:
         for index, (name, query) in enumerate([
-            ('roads', f'SELECT osm_id, name, ref, highway FROM lines WHERE highway IN ({roads})'),
-            ('places', f"SELECT osm_id, name, place FROM points WHERE place IN ({places}) AND name IS NOT NULL")]):
+            ('roads', f'SELECT osm_id, name, name_en, ref, highway FROM lines WHERE highway IN ({roads})'),
+            ('places', f"SELECT osm_id, name, name_en, place FROM points WHERE place IN ({places}) AND (name IS NOT NULL OR name_en IS NOT NULL)")]):
             check(job)
             emit(f'Importing {name} from regional OSM file (first import only)…')
             result = gdal.VectorTranslate(str(partial), str(source), format='GPKG',
@@ -114,7 +114,7 @@ def extract(job):
             srs = osr.SpatialReference()
             srs.ImportFromEPSG(4326)
             destination = output.CreateLayer(name, srs, ogr.wkbLineString if name == 'roads' else ogr.wkbPoint)
-            for field in ('osm_id', 'name', 'ref', 'highway', 'place', 'road_group'):
+            for field in ('osm_id', 'name', 'name_en', 'ref', 'highway', 'place', 'road_group'):
                 destination.CreateField(ogr.FieldDefn(field, ogr.OFTString))
             count = 0
             duplicates[name] = 0
@@ -136,7 +136,7 @@ def extract(job):
                             continue
                         seen.add(osm_id)
                         out = ogr.Feature(destination.GetLayerDefn())
-                        for field in ('name', 'ref', 'highway', 'place', 'road_group'):
+                        for field in ('name', 'name_en', 'ref', 'highway', 'place', 'road_group'):
                             field_index = feature.GetFieldIndex(field)
                             out.SetField(field, (feature.GetField(field_index) or '') if field_index >= 0 else '')
                         out.SetField('osm_id', ('way/' if name == 'roads' else 'node/') + osm_id)

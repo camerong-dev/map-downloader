@@ -1,5 +1,13 @@
 """Road display groups shared by the GUI, OSM conversion and QGIS worker."""
 import re
+import math
+
+
+def osm_display_scale(value):
+    scale = float(value)
+    if not math.isfinite(scale) or not 1 <= scale <= 4:
+        raise ValueError('OSM size must be between 100% and 400%.')
+    return scale
 
 ROAD_GROUPS = {
     'motorway': 'Motorways / M roads',

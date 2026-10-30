@@ -80,7 +80,7 @@ class SplitTab(ttk.Frame):
         self.zoom_label = tk.StringVar(value='Preview 100%')
         ttk.Label(view, textvariable=self.zoom_label).pack(side='left', padx=10)
         ttk.Label(view, text='Wheel: zoom • Drag: pan • Polygon: click points, then Finish outline').pack(side='left')
-        self.canvas = tk.Canvas(self, background='#23313b', height=200, highlightthickness=0)
+        self.canvas = tk.Canvas(self, background='#23313b', height=440, highlightthickness=0)
         self.canvas.pack(fill='both', expand=True, pady=8)
         self.canvas.bind('<Configure>', self.canvas_resized)
         self.canvas.bind('<ButtonPress-1>', self.pan_start)
@@ -136,7 +136,7 @@ class SplitTab(ttk.Frame):
         self.status = tk.StringVar(value='Ready')
         self.process_display = ProcessDisplay(self, self.status, wraplength=780)
         self.process_display.pack(fill='x')
-        self.log = ScrolledText(self, height=3, state='disabled')
+        self.log = ScrolledText(self, height=12, state='disabled')
         self.log.pack(fill='x', pady=(4, 0))
         self.process_display.log = self.log
         self.after(100, self.poll)

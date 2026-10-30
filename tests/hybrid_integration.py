@@ -78,6 +78,22 @@ with tempfile.TemporaryDirectory(prefix='hybrid-test-') as temporary:
     b_roads = next(layer for layer in project.mapLayers().values() if layer.name() == ROAD_GROUPS['b_road'])
     assert [f['ref'] for f in b_roads.getFeatures()] == ['B1234']
     project.clear()
+    enlarged_folder = folder / 'enlarged'
+    enlarged_folder.mkdir()
+    for name in ('roads.geojson', 'places.geojson'):
+        (enlarged_folder / name).write_bytes((folder / name).read_bytes())
+    run(dict(job, folder=str(enlarged_folder), osm_scale=2))
+    enlarged = gdal.Open(str(enlarged_folder / 'overlay.tif'))
+    enlarged_pixels = enlarged.ReadAsArray()
+    assert enlarged.GetGeoTransform() == gdal.Open(str(folder / 'overlay.tif')).GetGeoTransform()
+    assert np.count_nonzero(enlarged_pixels[3, :-30]) > np.count_nonzero(pixels[3, :-30]), 'OSM size did not enlarge rendered coverage'
+    enlarged = None
+    assert project.read(str(enlarged_folder / 'hybrid.qgz'))
+    major = next(layer for layer in project.mapLayers().values() if layer.name() == ROAD_GROUPS['a_road'])
+    assert abs(major.renderer().symbol().symbolLayer(0).width() - 2) < 1e-6
+    assert abs(major.labeling().settings().format().size() - 18) < 1e-6
+    assert major.minimumScale() == 3000000
+    project.clear()
     custom_folder = folder / 'custom'
     custom_folder.mkdir()
     for name in ('roads.geojson', 'places.geojson'):

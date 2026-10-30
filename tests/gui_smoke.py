@@ -23,16 +23,36 @@ def main(search, tile_image):
     try:
         # Check the smallest supported window, including the longer final timing
         # summary, so the process logs remain usable on every tab.
-        app.geometry('1100x860')
+        app.geometry('1100x700')
         app.update()
-        notebook = app.hybrid.master
+        notebook = app.tabs
         for index, tab in enumerate((app, app.mosaic, app.splitter, app.hybrid)):
             notebook.select(index)
             tab.process_display.start('Layout check')
             tab.process_display.finish()
             app.update()
-            assert tab.log.winfo_height() >= 30, (index, tab.log.winfo_height())
+            page = app.pages[index]
+            assert tab.log.winfo_height() >= 160, (index, tab.log.winfo_height())
+            assert page.content.winfo_height() > page.viewport.winfo_height()
+            page.show_progress()
+            app.update()
+            assert page.viewport.yview()[0] > 0
+            assert tab.log.winfo_rooty() >= page.viewport.winfo_rooty()
+
             assert tab.log.winfo_rooty() + tab.log.winfo_height() <= app.winfo_rooty() + app.winfo_height()
+            page.viewport.yview_moveto(0)
+            app.update()
+            first, last = page.viewport.yview()
+            assert first == 0
+            child = tab.process_display.winfo_children()[0]
+            page._wheel(SimpleNamespace(widget=child, delta=-120, num=None))
+            assert page.viewport.yview()[0] > first
+            before = page.viewport.yview()
+            page._wheel(SimpleNamespace(widget=tab.log, delta=-120, num=None))
+            assert page.viewport.yview() == before, 'Page stole log scrolling'
+        assert app.region_preview.canvas.winfo_height() >= 440
+        assert app.region_preview.canvas.winfo_width() >= 1000
+        assert app.splitter.canvas.winfo_height() >= 440
         app.withdraw()
         app.update_idletasks()
         import tkinter as tk

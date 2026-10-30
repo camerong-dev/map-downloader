@@ -565,3 +565,31 @@ existing-file protection using mocked HTTP responses (no large downloads).
 `tests/mosaic_integration.py` runs separately under QGIS Python and verifies
 synthetic mosaic dimensions, transparency, known colour-offset correction,
 cancellation and output-file protection.
+
+### OSM readability
+
+In **OSM hybrid overlay**, set **OSM size** to **100–400%** (default **200%**).
+This enlarges road lines, road names/numbers, place names and text outlines, and
+keeps the selected features visible at wider zoom levels. Try **200%** or **300%**
+for maps you view zoomed out. Larger labels may leave less room for nearby names.
+The setting applies to newly generated overlay/hybrid TIFFs and the QGIS project;
+regenerate the hybrid to change labels already baked into a TIFF. It leaves the
+satellite pixel spacing unchanged and does not add detail to 10 m imagery.
+For text that remains sharp as you zoom, use the generated `hybrid.qgz` in QGIS.
+
+**Prefer English names** is enabled by default in **OSM hybrid overlay**. Towns,
+cities, villages and roads use OSM's `name:en` where available, falling back to the
+local `name` otherwise. Road numbers are unchanged. Uncheck it to use local names.
+This uses names supplied by OSM contributors rather than automatic translation;
+English coverage varies by place and road. Regenerate the hybrid to apply it to
+existing maps. Existing downloaded PBFs are reused, with a one-time database
+reimport to retain English names.
+
+### Scrolling the workspace
+
+Each tab has a full-page vertical scrollbar. Scroll over settings or empty page
+space to move through the page; maps keep wheel zoom and logs keep their own
+scrolling. **Progress & log ↓** jumps to the larger log at the bottom, and
+**Top ↑** returns to the settings. Keyboard focus brings off-screen controls into
+view. The download map spans the page width, both map previews are taller, and
+logs show at least twelve lines without squeezing the map to fit the window.

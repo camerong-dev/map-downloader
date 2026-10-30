@@ -12,7 +12,7 @@ from tkinter.scrolledtext import ScrolledText
 from downloader import Bounds, Cancelled, parse_region
 from mosaic_runtime import find_qgis, qgis_command, start_worker
 from geofabrik import ATTRIBUTION, LICENSE, DEFAULT_SOURCE, obtain, validate_sources
-from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS
+from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS, osm_display_scale
 from export_gui import CompressionControls
 from process_timing import ProcessDisplay
 from gui_style import section
@@ -91,6 +91,15 @@ class HybridTab(ttk.Frame):
         selector = ttk.Combobox(options, textvariable=self.road_labels, values=ROAD_LABELS, state='readonly', width=20)
         selector.grid(row=2, column=1, columnspan=2, sticky='w', padx=5)
         self.label_selector = selector
+        ttk.Label(options, text='OSM size').grid(row=4, column=0, sticky='w', padx=5)
+        self.osm_size = tk.StringVar(value='200%')
+        self.size_selector = ttk.Combobox(options, textvariable=self.osm_size,
+                                        values=['100%', '150%', '200%', '300%', '400%'], state='readonly', width=8)
+        self.size_selector.grid(row=4, column=1, sticky='w', padx=5)
+        self.prefer_english = tk.BooleanVar(value=True)
+        english = ttk.Checkbutton(options, text='Prefer English names', variable=self.prefer_english)
+        english.grid(row=4, column=2, sticky='w', padx=5)
+        self.controls.append(english)
         self.city_names = tk.BooleanVar(value=True)
         self.village_names = tk.BooleanVar(value=False)
         self.small_place_names = tk.BooleanVar(value=False)
@@ -171,6 +180,7 @@ class HybridTab(ttk.Frame):
             if bounds:
                 self.validate_bounds(bounds)
             resolution = float(self.resolution.get())
+            osm_scale = osm_display_scale(float(self.osm_size.get().rstrip('%')) / 100)
             if not math.isfinite(resolution) or resolution <= 0:
                 raise ValueError('Enter a positive finite metres/pixel value.')
             root = self.qgis.get().strip()
@@ -190,6 +200,8 @@ class HybridTab(ttk.Frame):
             render_rasters = self.render_rasters.get()
             encoding = self.encoding.options()
             display = {'road_groups': [key for key, variable in self.road_groups.items() if variable.get()],
+                       'osm_scale': osm_scale,
+                       'prefer_english': self.prefer_english.get(),
                        'road_labels': self.road_labels.get(),
                        'place_types': (['city', 'town'] if self.city_names.get() else [])
                                       + (['village'] if self.village_names.get() else [])
@@ -204,6 +216,7 @@ class HybridTab(ttk.Frame):
         self.run_button.configure(state='disabled')
         self.cancel_button.configure(state='normal')
         self.label_selector.configure(state='disabled')
+        self.size_selector.configure(state='disabled')
         self.encoding.set_busy(True)
         for control in self.controls:
             control.configure(state='disabled')
@@ -324,6 +337,7 @@ class HybridTab(ttk.Frame):
                 self.run_button.configure(state='normal')
                 self.cancel_button.configure(state='disabled')
                 self.label_selector.configure(state='readonly')
+                self.size_selector.configure(state='readonly')
                 self.encoding.set_busy(False)
                 for control in self.controls:
                     control.configure(state='normal')

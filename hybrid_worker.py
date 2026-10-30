@@ -16,7 +16,7 @@ from qgis.PyQt.QtCore import QSize
 from qgis.PyQt.QtGui import QColor, QFont, QFontDatabase, QPainter
 
 from raster_output import finish_output, write_rgb_style, compression_options
-from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS
+from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS, osm_display_scale
 
 _application = None
 FONT = 'Arial' if sys.platform == 'win32' else 'DejaVu Sans'
@@ -62,7 +62,7 @@ def inspect_imagery(path):
             'east': gt[0] + view.RasterXSize * gt[1], 'north': gt[3]}
 
 
-def labels(layer, size, priority, road=False, mode='Numbers and names'):
+def labels(layer, size, priority, road=False, mode='Numbers and names', display_scale=1, prefer_english=True):
     settings = QgsPalLayerSettings()
     settings.fieldName = 'coalesce(nullif("name",\'\'), "ref")'
     if road:
@@ -72,16 +72,20 @@ def labels(layer, size, priority, road=False, mode='Numbers and names'):
             settings.fieldName = '"name"'
         else:
             settings.fieldName = 'CASE WHEN "ref" != \'\' AND "name" != \'\' AND "ref" != "name" THEN "ref" || \' · \' || "name" ELSE coalesce(nullif("ref",\'\'), "name") END'
+    if prefer_english and layer.fields().indexFromName('name_en') >= 0:
+        name = 'coalesce(nullif(trim("name_en"), \'\'), "name")'
+        settings.fieldName = settings.fieldName.replace('"name"', name)
     settings.isExpression = True
     settings.priority = priority
     settings.placement = Qgis.LabelPlacement.Curved if road else Qgis.LabelPlacement.OrderedPositionsAroundPoint
     text = QgsTextFormat()
-    text.setFont(QFont(FONT, size, QFont.Weight.Bold if not road else QFont.Weight.Normal))
+    size *= display_scale
+    text.setFont(QFont(FONT, round(size), QFont.Weight.Bold if not road else QFont.Weight.Normal))
     text.setSize(size)
     text.setColor(QColor('#ffffff'))
     halo = QgsTextBufferSettings()
     halo.setEnabled(True)
-    halo.setSize(0.7)
+    halo.setSize(0.7 * display_scale)
     halo.setColor(QColor('#253127'))
     text.setBuffer(halo)
     settings.setFormat(text)
@@ -96,7 +100,7 @@ def render_raster(name, selected, settings, extent, width, height, resolution, f
     block = int(job.get('render_block_size', 4096))
     if not 64 <= block <= 4096:
         raise ValueError('Render block size must be between 64 and 4096 pixels.')
-    padding = 256
+    padding = math.ceil(256 * osm_display_scale(job.get('osm_scale', 1)))
     target = folder / f'{name}.tif'
     partial = folder / f'.{name}.part.tif'
     png = folder / f'.{name}.block.png'
@@ -203,6 +207,7 @@ def run(job):
     extent = QgsCoordinateTransform(QgsCoordinateReferenceSystem('EPSG:4326'), crs, project).transformBoundingBox(
         QgsRectangle(b['west'], b['south'], b['east'], b['north']))
     resolution = float(job['resolution'])
+    display_scale = osm_display_scale(job.get('osm_scale', 1))
     if not math.isfinite(resolution) or resolution <= 0:
         raise ValueError('Resolution must be a positive finite number.')
     width, height = math.ceil(extent.width() / resolution), math.ceil(extent.height() / resolution)
@@ -240,16 +245,17 @@ def run(job):
         if not layer.isValid() or not layer.setSubsetString(expression):
             raise RuntimeError(f'Cannot load OSM layer: {name}')
         layer.setScaleBasedVisibility(True)
-        layer.setMinimumScale(scale)
+        layer.setMinimumScale(scale * display_scale)
         if source == 'roads':
-            symbol = QgsLineSymbol.createSimple({'line_color': '#30352e', 'line_width': str(stroke + 0.35)})
-            foreground = QgsLineSymbol.createSimple({'line_color': color, 'line_width': str(stroke)})
+            symbol = QgsLineSymbol.createSimple({'line_color': '#30352e', 'line_width': str((stroke + 0.35) * display_scale)})
+            foreground = QgsLineSymbol.createSimple({'line_color': color, 'line_width': str(stroke * display_scale)})
             symbol.appendSymbolLayer(foreground.takeSymbolLayer(0))
             layer.setRenderer(QgsSingleSymbolRenderer(symbol))
         else:
             layer.renderer().symbol().setOpacity(0)
         if source != 'roads' or label_mode != 'Off':
-            labels(layer, size, priority, source == 'roads', label_mode)
+            labels(layer, size, priority, source == 'roads', label_mode, display_scale,
+                   job.get('prefer_english', True))
         project.addMapLayer(layer)
         layers.insert(0, layer)
     satellite = None

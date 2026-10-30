@@ -15,13 +15,13 @@ with tempfile.TemporaryDirectory(prefix='geofabrik-test-') as temporary:
     root = Path(temporary)
     source = root / 'region.osm'
     source.write_text('''<osm version="0.6" generator="test">
-<node id="1" lat="51.01" lon="0.01"><tag k="name" v="Test Town"/><tag k="place" v="town"/></node>
+<node id="1" lat="51.01" lon="0.01"><tag k="name" v="Test Town"/><tag k="name:en" v="English Town"/><tag k="place" v="town"/></node>
 <node id="2" lat="51.005" lon="-0.01"/><node id="3" lat="51.005" lon="0.03"/>
 <node id="4" lat="51.012" lon="0.001"/><node id="5" lat="51.012" lon="0.019"/>
 <node id="6" lat="51.015" lon="0.001"/><node id="7" lat="51.015" lon="0.019"/>
 <node id="8" lat="53" lon="1"/><node id="9" lat="53" lon="2"/>
 <node id="10" lat="53" lon="1.5"><tag k="name" v="Outside Town"/><tag k="place" v="town"/></node>
-<way id="20"><nd ref="2"/><nd ref="3"/><tag k="highway" v="primary"/><tag k="ref" v="A27"/><tag k="name" v="Main Road"/></way>
+<way id="20"><nd ref="2"/><nd ref="3"/><tag k="highway" v="primary"/><tag k="ref" v="A27"/><tag k="name" v="Main Road"/><tag k="name:en" v="English Road"/></way>
 <way id="21"><nd ref="4"/><nd ref="5"/><tag k="highway" v="tertiary"/><tag k="ref" v="B1234"/><tag k="name" v="Numbered Road"/></way>
 <way id="22"><nd ref="6"/><nd ref="7"/><tag k="highway" v="residential"/><tag k="name" v="Residential Street"/></way>
 <way id="23"><nd ref="8"/><nd ref="9"/><tag k="highway" v="primary"/><tag k="name" v="Outside Road"/></way>
@@ -42,6 +42,8 @@ with tempfile.TemporaryDirectory(prefix='geofabrik-test-') as temporary:
     assert by_id['way/21']['properties']['road_group'] == 'b_road'
     assert by_id['way/22']['properties']['road_group'] == 'local'
     assert places[0]['properties']['name'] == 'Test Town'
+    assert places[0]['properties']['name_en'] == 'English Town'
+    assert by_id['way/20']['properties']['name_en'] == 'English Road'
     # A road crossing the bbox is retained even when its endpoints are outside.
     assert by_id['way/20']['geometry']['coordinates'][0][0] < 0
     cached = import_extract(source, cache, job)
@@ -52,6 +54,28 @@ with tempfile.TemporaryDirectory(prefix='geofabrik-test-') as temporary:
     project = QgsProject.instance()
     assert all(layer.isValid() for layer in project.mapLayers().values())
     assert not any(layer.name() == 'Minor / residential / service roads' for layer in project.mapLayers().values())
+    from qgis.core import QgsExpression, QgsExpressionContext
+    from hybrid_worker import labels
+    def label_value(layer, feature):
+        context = QgsExpressionContext()
+        context.setFields(layer.fields())
+        context.setFeature(feature)
+        expression = QgsExpression(layer.labeling().settings().fieldName)
+        value = expression.evaluate(context)
+        assert not expression.hasEvalError(), expression.evalErrorString()
+        return value
+    town = next(layer for layer in project.mapLayers().values() if layer.name() == 'Town')
+    assert label_value(town, next(town.getFeatures())) == 'English Town'
+    major = next(layer for layer in project.mapLayers().values() if layer.name() == 'A roads / major roads')
+    assert label_value(major, next(major.getFeatures())) == 'A27 · English Road'
+    secondary = next(layer for layer in project.mapLayers().values() if layer.name() == 'B roads / secondary roads')
+    assert label_value(secondary, next(secondary.getFeatures())) == 'B1234 · Numbered Road'
+    labels(town, 12, 9, prefer_english=False)
+    assert label_value(town, next(town.getFeatures())) == 'Test Town'
+    labels(major, 9, 5, road=True, mode='Numbers only')
+    assert label_value(major, next(major.getFeatures())) == 'A27'
+    labels(major, 9, 5, road=True, mode='Names only')
+    assert label_value(major, next(major.getFeatures())) == 'English Road'
     assert (folder / 'overlay.tif').is_file() and (folder / 'hybrid.qgz').is_file()
     raster = gdal.Open(str(folder / 'overlay.tif'))
     assert raster.RasterCount == 4 and raster.GetGeoTransform()[1] == 5
@@ -62,9 +86,9 @@ with tempfile.TemporaryDirectory(prefix='geofabrik-test-') as temporary:
     reference = root / 'reference'
     reference.mkdir()
     elements = [{'type': 'node', 'id': 1, 'lon': 0.01, 'lat': 51.01,
-                 'tags': {'name': 'Test Town', 'place': 'town'}}]
+                 'tags': {'name': 'Test Town', 'name:en': 'English Town', 'place': 'town'}}]
     for ident, tags, y, x1, x2 in [
-        (20, {'highway': 'primary', 'ref': 'A27', 'name': 'Main Road'}, 51.005, -0.01, 0.03),
+        (20, {'highway': 'primary', 'ref': 'A27', 'name': 'Main Road', 'name:en': 'English Road'}, 51.005, -0.01, 0.03),
         (21, {'highway': 'tertiary', 'ref': 'B1234', 'name': 'Numbered Road'}, 51.012, 0.001, 0.019),
         (22, {'highway': 'residential', 'name': 'Residential Street'}, 51.015, 0.001, 0.019)]:
         elements.append({'type': 'way', 'id': ident, 'tags': tags,
@@ -88,7 +112,7 @@ with tempfile.TemporaryDirectory(prefix='geofabrik-test-') as temporary:
     # unique data. OSM node and way IDs are separate namespaces.
     second_source = root / 'second-country.osm'
     second_source.write_text('''<osm version="0.6" generator="test">
-<node id="1" lat="51.01" lon="0.01"><tag k="name" v="Test Town"/><tag k="place" v="town"/></node>
+<node id="1" lat="51.01" lon="0.01"><tag k="name" v="Test Town"/><tag k="name:en" v="English Town"/><tag k="place" v="town"/></node>
 <node id="2" lat="51.005" lon="-0.01"/><node id="3" lat="51.005" lon="0.03"/>
 <node id="30" lat="51.018" lon="0.017"><tag k="name" v="Second Town"/><tag k="place" v="town"/></node>
 <node id="31" lat="51.017" lon="0.014"/><node id="32" lat="51.017" lon="0.019"/>

@@ -54,7 +54,7 @@ class RegionPreview(ttk.LabelFrame):
         ttk.Button(tools, text='−', width=2, command=lambda: self.change_zoom(-1)).pack(side='right')
         ttk.Button(tools, text='+', width=2, command=lambda: self.change_zoom(1)).pack(side='right', padx=4)
         ttk.Button(tools, text='Fit area', command=self.fit).pack(side='right')
-        self.canvas = tk.Canvas(self, height=160, background='#e4eaf0', highlightthickness=0)
+        self.canvas = tk.Canvas(self, height=440, background='#e4eaf0', highlightthickness=0)
         self.canvas.pack(fill='both', expand=True, pady=(6, 4))
         self.canvas.bind('<Configure>', self.schedule)
         self.canvas.bind('<ButtonPress-1>', self.press)

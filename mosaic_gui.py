@@ -31,7 +31,7 @@ class MosaicTab(ttk.Frame):
         ttk.Entry(runtime, textvariable=self.qgis).pack(side='left', fill='x', expand=True)
         ttk.Button(runtime, text='Browse…', command=self.browse_qgis).pack(side='left', padx=5)
         ttk.Label(self, text='Input TIFFs — first file is the reference when histogram matching is selected').pack(anchor='w', pady=(12, 4))
-        self.listbox = tk.Listbox(self, height=4, selectmode='extended')
+        self.listbox = tk.Listbox(self, height=6, selectmode='extended')
         self.listbox.pack(fill='both', expand=True)
         controls = ttk.Frame(self)
         controls.pack(fill='x', pady=8)
@@ -82,7 +82,7 @@ class MosaicTab(ttk.Frame):
         self.process_display.pack(fill='x', pady=8)
         self.progress = ttk.Progressbar(self, maximum=100)
         self.progress.pack(fill='x')
-        self.log = ScrolledText(self, height=5, state='disabled')
+        self.log = ScrolledText(self, height=12, state='disabled')
         self.log.pack(fill='both', expand=True, pady=8)
         self.process_display.log = self.log
         self.after(100, self.poll)

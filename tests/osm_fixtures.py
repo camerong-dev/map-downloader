@@ -7,6 +7,7 @@ def collections(elements):
     for element in elements:
         tags = element.get('tags', {})
         properties = {key: tags.get(key, '') for key in ('name', 'ref', 'highway', 'place')}
+        properties['name_en'] = tags.get('name:en', '')
         properties['osm_id'] = f"{element['type']}/{element['id']}"
         if element['type'] == 'node' and tags.get('place') and tags.get('name'):
             geometry = {'type': 'Point', 'coordinates': [element['lon'], element['lat']]}

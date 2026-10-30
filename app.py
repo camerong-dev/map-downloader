@@ -12,7 +12,7 @@ from mosaic_gui import MosaicTab
 from split_gui import SplitTab
 from hybrid_gui import HybridTab
 from process_timing import ProcessDisplay
-from gui_style import configure, section
+from gui_style import configure, section, ScrollablePage
 from region_preview import RegionPreview
 
 
@@ -30,22 +30,27 @@ class App(tk.Tk):
         configure(self)
         self.title('ESA Maps — Map workspace')
         self.geometry('1140x900')
-        self.minsize(1100, 860)
+        self.minsize(1100, 700)
         self.events = queue.Queue()
         self.cancel = threading.Event()
         self.busy = False
         self.tiles = []
         self.selection = None
         tabs = ttk.Notebook(self)
+        self.tabs = tabs
         tabs.pack(fill='both', expand=True)
-        frame = ttk.Frame(tabs, padding=18)
-        tabs.add(frame, text='1  Download')
-        self.mosaic = MosaicTab(tabs)
-        tabs.add(self.mosaic, text='2  Colour & merge')
-        self.splitter = SplitTab(tabs)
-        tabs.add(self.splitter, text='3  Split maps')
-        self.hybrid = HybridTab(tabs, lambda: self.values()[0])
-        tabs.add(self.hybrid, text='4  OSM hybrid')
+        self.pages = []
+        for title in ('1  Download', '2  Colour & merge', '3  Split maps', '4  OSM hybrid'):
+            page = ScrollablePage(tabs)
+            tabs.add(page, text=title)
+            self.pages.append(page)
+        frame = ttk.Frame(self.pages[0].content, padding=18)
+        frame.pack(fill='x')
+        self.mosaic = MosaicTab(self.pages[1].content)
+        self.splitter = SplitTab(self.pages[2].content)
+        self.hybrid = HybridTab(self.pages[3].content, lambda: self.values()[0])
+        for tab in (self.mosaic, self.splitter, self.hybrid):
+            tab.pack(fill='x')
         ttk.Label(frame, text='ESA WorldCover region downloader', style='Title.TLabel').pack(anchor='w')
         ttk.Label(frame, text='Free public S3 • No account or AWS keys required • Imagery and land cover').pack(anchor='w', pady=(5, 14))
         region = ttk.Frame(frame)
@@ -53,9 +58,9 @@ class App(tk.Tk):
         region.columnconfigure(0, weight=1, uniform='region')
         region.columnconfigure(1, weight=1, uniform='region')
         inputs = ttk.LabelFrame(region, text='Region & dataset — WGS84', padding=10)
-        inputs.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
+        inputs.grid(row=0, column=0, columnspan=2, sticky='nsew', pady=(0, 10))
         self.region_preview = RegionPreview(region, self.select_region)
-        self.region_preview.grid(row=0, column=1, sticky='nsew', padx=(8, 0))
+        self.region_preview.grid(row=1, column=0, columnspan=2, sticky='nsew')
         inputs.columnconfigure(1, weight=1)
         inputs.columnconfigure(3, weight=1)
         ttk.Label(inputs, text='Paste your region: west, south, east, north').grid(row=0, column=0, columnspan=4, sticky='w', pady=(0, 5))
