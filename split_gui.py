@@ -125,6 +125,10 @@ class SplitTab(ttk.Frame):
         bottom.pack(fill='x', pady=8)
         self.export_button = ttk.Button(bottom, text='Export selected areas', command=self.export, state='disabled', style='Primary.TButton')
         self.export_button.pack(side='left')
+        self.combine_grid = tk.BooleanVar(value=True)
+        combine = ttk.Checkbutton(bottom, text='Export grid as one TIFF', variable=self.combine_grid)
+        combine.pack(side='left', padx=8)
+        self.grid_controls.append(combine)
         self.cancel_button = ttk.Button(bottom, text='Cancel', command=self.cancel, state='disabled')
         self.cancel_button.pack(side='left', padx=8)
         self.progress = ttk.Progressbar(bottom, maximum=100)
@@ -297,6 +301,7 @@ class SplitTab(ttk.Frame):
                     raise ValueError('Choose an overview spacing larger than the detailed pixel spacing.')
             self.start({'action': 'export', 'rows': rows, 'columns': columns,
                         'selected': selected, 'output': self.output.get(),
+                        'combine_grid': self.combine_grid.get(),
                         'polygon': self.polygon if drawing else None,
                         'create_overview': self.create_overview.get(), 'overview_resolution': overview_resolution,
                         **self.encoding.options()})

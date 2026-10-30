@@ -413,7 +413,14 @@ TIFFs into smaller geographic areas:
 4. Choose an output location. The app proposes a new subfolder.
 5. Leave **Create whole-region overview** enabled and choose **50, 100, 250 or 500**
    EPSG:3857 metres per pixel (default **100**). Uncheck it to export detailed areas only.
-6. Click **Export selected areas** (enabled once an area is selected). Files are named `area_row01_col01.tif`, etc.
+6. Leave **Export grid as one TIFF** checked (the default) to write the selected
+   grid cells directly into `area_selected.tif`. The file is cropped to the selected
+   cells' combined bounds; unselected cells, including gaps between separate
+   selections, are masked out. Source pixel alignment, resolution and existing
+   nodata/alpha validity are preserved, avoiding a later merge step. Uncheck this
+   option to export individual files named `area_row01_col01.tif`, etc. Polygon
+   mode always writes one `area_polygon.tif` regardless of this checkbox.
+   Click **Export selected areas** (enabled once an area is selected).
 
 The separate `region_overview_100m.tif` (or selected spacing) covers the **entire loaded
 region**, including grid areas excluded from detailed export. It averages the rendered

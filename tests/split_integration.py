@@ -171,6 +171,38 @@ class SplitTests(unittest.TestCase):
                 run(job)
         self.assertEqual(list(Path(job['output']).glob('*.tif')), [])
 
+    def test_combined_grid_preserves_cells_and_masks_gaps(self):
+        for selected in ([1, 4], [0, 1, 2, 3, 4, 5], [3], [0, 1, 2, 4, 5]):
+            with self.subTest(selected=selected):
+                job = self.job()
+                job.update(combine_grid=True, selected=selected,
+                           output=str(self.root / ('combined-' + '-'.join(map(str, selected)))))
+                run(job)
+                files = list(Path(job['output']).glob('*.tif'))
+                self.assertEqual([p.name for p in files], ['area_selected.tif'])
+                ds = gdal.Open(str(files[0]))
+                windows = [w for i, w in enumerate(grid_windows(11, 7, 3, 2)) if i in selected]
+                x0 = min(w[2] for w in windows)
+                y0 = min(w[3] for w in windows)
+                x1 = max(w[2]+w[4] for w in windows)
+                y1 = max(w[3]+w[5] for w in windows)
+                expected = np.zeros_like(self.data, dtype=np.uint8)
+                for _, _, x, y, w, h in windows:
+                    expected[y:y+h, x:x+w] = 255
+                expected[self.data == 0] = 0
+                np.testing.assert_array_equal(ds.ReadAsArray(), self.data[y0:y1, x0:x1])
+                np.testing.assert_array_equal(ds.GetRasterBand(1).GetMaskBand().ReadAsArray(), expected[y0:y1, x0:x1])
+                self.assertEqual(ds.GetRasterBand(1).GetScale(), 0.0001)
+                self.assertAlmostEqual(ds.GetGeoTransform()[0], -62+x0*0.01)
+                ds = None
+
+    def test_combined_grid_requires_selection(self):
+        job = self.job()
+        job.update(combine_grid=True, selected=[])
+        with self.assertRaises(ValueError):
+            run(job)
+        self.assertFalse(Path(job['output']).exists())
+
     def test_polygon_crops_and_masks_without_changing_pixels(self):
         job = self.job()
         job['polygon'] = [[1, 1], [9, 1], [1, 6]]
@@ -220,6 +252,17 @@ class SplitTests(unittest.TestCase):
                 self.assertEqual(mask[-1, -1], 0)
                 if compression == 'DEFLATE':
                     self.assertEqual(ds.GetRasterBand(4).ReadAsArray()[-1, -1], 0)
+                ds = None
+                job.update(polygon=None, combine_grid=True, rows=1, columns=3, selected=[0, 2],
+                           output=str(self.root / (compression + '-grid')))
+                run(job)
+                ds = gdal.Open(str(Path(job['output']) / 'area_selected.tif'))
+                expected = np.full((7, 11), 255, dtype=np.uint8)
+                expected[:, 3:7] = 0
+                expected[1, 1] = 0
+                np.testing.assert_array_equal(ds.GetRasterBand(1).GetMaskBand().ReadAsArray(), expected)
+                if compression == 'DEFLATE':
+                    np.testing.assert_array_equal(ds.GetRasterBand(4).ReadAsArray(), expected)
                 ds = None
 
     def test_invalid_polygon_does_not_create_output(self):

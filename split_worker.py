@@ -205,13 +205,27 @@ def polygon_selection(points, width, height):
     return geometry, (0, 0, x, y, math.ceil(xmax)-x, math.ceil(ymax)-y)
 
 
+def combined_grid_selection(windows):
+    """Keep exact cell boundaries, including holes and disconnected selections."""
+    geometry = ogr.Geometry(ogr.wkbGeometryCollection)
+    for _, _, x, y, w, h in windows:
+        ring = ogr.Geometry(ogr.wkbLinearRing)
+        for px, py in [(x, y), (x+w, y), (x+w, y+h), (x, y+h), (x, y)]:
+            ring.AddPoint_2D(px, py)
+        polygon = ogr.Geometry(ogr.wkbPolygon)
+        polygon.AddGeometry(ring)
+        geometry.AddGeometry(polygon)
+    xmin, xmax, ymin, ymax = geometry.GetEnvelope()
+    return geometry, (0, 0, int(xmin), int(ymin), int(xmax-xmin), int(ymax-ymin))
+
+
 def mask_polygon(result, source, geometry, x0, y0, job):
     # Rasterize in source pixel coordinates in bounded blocks, retaining the
     # original nodata and alpha validity in a lossless internal TIFF mask.
     # GDAL 3.11 unified the raster/vector memory drivers under MEM.
     driver = ogr.GetDriverByName('MEM') or ogr.GetDriverByName('Memory')
     vector = driver.CreateDataSource('')
-    layer = vector.CreateLayer('outline', geom_type=ogr.wkbPolygon)
+    layer = vector.CreateLayer('outline', geom_type=ogr.wkbUnknown)
     feature = ogr.Feature(layer.GetLayerDefn())
     feature.SetGeometry(geometry)
     layer.CreateFeature(feature)
@@ -274,6 +288,10 @@ def run(job):
                 windows = [w for i, w in enumerate(windows) if i in selected]
             if not windows:
                 raise ValueError('Select at least one area on the preview.')
+            combined = job.get('polygon') is None and job.get('combine_grid', False)
+            if combined:
+                geometry, window = combined_grid_selection(windows)
+                windows = [window]
             overview_resolution = float(job.get('overview_resolution', 100)) if job.get('create_overview', False) else None
             if overview_resolution is not None and (not math.isfinite(overview_resolution) or overview_resolution < max(abs(ds.GetGeoTransform()[1]), abs(ds.GetGeoTransform()[5]))):
                 raise ValueError('Choose overview spacing at least as large as the detailed pixel spacing.')
@@ -283,12 +301,14 @@ def run(job):
             output.mkdir(parents=True)
             manifest = {'inputs': list(map(str, paths)), 'rows': job['rows'], 'columns': job['columns'],
                         'crs_wkt': ds.GetProjection(), 'areas': [], 'polygon_pixels': job.get('polygon'),
+                        'combine_grid': combined, 'selected': job.get('selected', []),
                         'compression': job.get('compression', 'DEFLATE'),
                         'jpeg_quality': job.get('jpeg_quality', 85) if job.get('compression', 'DEFLATE').upper() == 'JPEG' else None}
             try:
                 for i, (r, c, x, y, w, h) in enumerate(windows):
                     check_cancel(job)
-                    name = 'area_polygon.tif' if geometry is not None else f'area_row{r + 1:02d}_col{c + 1:02d}.tif'
+                    name = ('area_selected.tif' if combined else 'area_polygon.tif' if geometry is not None
+                            else f'area_row{r + 1:02d}_col{c + 1:02d}.tif')
                     partial = output / (name + '.part.tif')
                     target = output / name
                     emit('status', message=f'Exporting {i + 1}/{len(windows)}: {name}', progress=100 * i / len(windows))
