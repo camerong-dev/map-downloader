@@ -18,6 +18,7 @@ from qgis.PyQt.QtGui import QColor, QFont, QFontDatabase, QPainter, QImage
 
 from raster_output import finish_output, write_rgb_style, compression_options
 from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS, osm_display_scale, osm_style
+from map_plan import MapPlan, projected_plan
 
 _application = None
 FONT = 'Arial' if sys.platform == 'win32' else 'DejaVu Sans'
@@ -177,13 +178,12 @@ def render_raster(name, selected, settings, extent, width, height, resolution, f
     # Padding provides label-placement context around block edges. The crop writes
     # exact, non-overlapping pixel windows on the single output grid.
     block = int(job.get('render_block_size', 4096))
-    if not 64 <= block <= 4096:
-        raise ValueError('Render block size must be between 64 and 4096 pixels.')
+    plan = MapPlan(width, height, block)
     padding = math.ceil(256 * osm_display_scale(job.get('osm_scale', 1)))
     target = folder / f'{name}.tif'
     partial = folder / f'.{name}.part.tif'
     result = source = None
-    cols, rows = math.ceil(width / block), math.ceil(height / block)
+    cols, rows = plan.columns, plan.rows
     encoding = hybrid_encoding(job) if name in ('hybrid', 'osm') else {'compression': 'DEFLATE'}
     jpeg = encoding['compression'] == 'JPEG'
     started = time.monotonic()
@@ -412,10 +412,12 @@ def run(job):
     display_scale = osm_display_scale(job.get('osm_scale', 1))
     if not math.isfinite(resolution) or resolution <= 0:
         raise ValueError('Resolution must be a positive finite number.')
-    width, height = math.ceil(extent.width() / resolution), math.ceil(extent.height() / resolution)
-    # Exact square pixel spacing, extending by less than one pixel east/south.
-    extent.setXMaximum(extent.xMinimum() + width * resolution)
-    extent.setYMinimum(extent.yMaximum() - height * resolution)
+    if job.get('render_rasters', True):
+        plan = projected_plan(extent.width(), extent.height(), resolution, int(job.get('render_block_size', 4096)))
+        width, height = plan.width, plan.height
+        # Exact square pixel spacing, extending by less than one pixel east/south.
+        extent.setXMaximum(extent.xMinimum() + width * resolution)
+        extent.setYMinimum(extent.yMaximum() - height * resolution)
     layers = []
     sources = prepare_render_data(folder, job)
     selected_roads = job.get('road_groups', list(ROAD_GROUPS) if pure_osm else DEFAULT_ROADS)

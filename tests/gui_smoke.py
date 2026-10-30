@@ -7,6 +7,8 @@ import base64
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from contextlib import ExitStack
+from io import StringIO
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import App
@@ -192,9 +194,12 @@ def main(search, tile_image):
         assert app.osm.encoding.options()['compression'] == 'DEFLATE'
         assert all(variable.get() for variable in app.osm.road_groups.values())
         assert not app.osm.imagery.get()
-        with patch('hybrid_gui.start_worker') as worker:
-            worker.return_value.communicate.return_value = ('{"bounds": {"west": 1, "south": 50, "east": 2, "north": 51}}', None)
-            worker.return_value.returncode = 0
+        def inspector(*args):
+            process = Mock()
+            process.stdout = StringIO('{"bounds": {"west": 1, "south": 50, "east": 2, "north": 51}}\n')
+            process.wait.return_value = 0
+            return process
+        with patch('mosaic_runtime.start_worker', side_effect=inspector):
             hybrid.imagery.set('fixture.tif')
             app.osm.copy_area()
             assert app.osm.region_bounds() == Bounds(1, 50, 2, 51)
@@ -227,6 +232,12 @@ def main(search, tile_image):
                     assert job['imagery'] == '' and job['resolution'] == 2
                     assert job['compression'] == 'DEFLATE' and job['prefer_english']
                     assert job['osm_style'] == 'Dark'
+            app.osm.output.set(str(root / 'invalid-map'))
+            with patch.object(app.osm.encoding, 'options', side_effect=ValueError('Invalid encoding')), patch('hybrid_gui.messagebox.showerror') as error:
+                app.osm.start()
+                error.assert_called_once()
+            assert not (root / 'invalid-map').exists() and not app.osm.busy
+            assert 'render blocks' in app.osm.export_estimate.get()
             app.osm.output.set(str(root / 'map'))
             with patch('hybrid_gui.obtain', return_value=(source, {'kind': 'fixture'})), patch.object(app.osm, 'run_worker', side_effect=fake_worker):
                 app.osm.start()
@@ -263,6 +274,27 @@ def main(search, tile_image):
             display.start('Next operation')
             assert display.clock.elapsed == 0
             display.finish()
+        # Closing while several tabs are busy must signal every active job.
+        with ExitStack() as stack:
+            cancelled = []
+            for tab in (app.osm, app.hybrid, app.splitter, app.mosaic):
+                tab.busy = True
+                cancelled.append(stack.enter_context(patch.object(tab, 'cancel')))
+            destroy = stack.enter_context(patch.object(app, 'destroy'))
+            app.busy = True
+            app.close()
+            assert app.cancel.is_set()
+            for cancel in cancelled:
+                cancel.assert_called_once()
+            destroy.assert_not_called()
+            for tab in (app.osm, app.hybrid, app.splitter, app.mosaic):
+                tab.busy = False
+            app.busy = False
+            app.cancel.clear()
+        display = app.process_display
+        display.append('\n'.join(f'line {i}' for i in range(display.MAX_LOG_LINES + 20)))
+        assert int(app.log.index('end-1c').split('.')[0]) <= display.MAX_LOG_LINES
+        assert 'line 10019' in app.log.get('1.0', 'end')
     finally:
         app.destroy()
     print('Desktop layouts, place search, map selection, tile preview/download, timing and export defaults passed.')

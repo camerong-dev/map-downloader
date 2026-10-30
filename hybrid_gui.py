@@ -2,7 +2,6 @@
 import json
 from pathlib import Path
 import queue
-import sys
 import tempfile
 import threading
 import tkinter as tk
@@ -10,12 +9,13 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from downloader import Bounds, Cancelled, parse_region
-from mosaic_runtime import find_qgis, qgis_command, start_worker
+from mosaic_runtime import find_qgis, qgis_command, run_qgis_worker, worker_script, request_cancel, inspect_tiff_bounds
 from geofabrik import ATTRIBUTION, LICENSE, DEFAULT_SOURCE, obtain, validate_sources
 from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS, osm_display_scale, OSM_STYLES
 from export_gui import CompressionControls
 from process_timing import ProcessDisplay
 from gui_style import section
+from map_plan import geographic_plan
 
 
 class HybridTab(ttk.Frame):
@@ -88,6 +88,9 @@ class HybridTab(ttk.Frame):
         export = section(right, 'Output')
         self.row('New output folder', self.output, lambda: self.choose(self.output, 'output'), parent=export)
         self.row('Export metres/pixel', self.resolution, parent=export)
+        self.export_estimate = tk.StringVar()
+        ttk.Label(export, textvariable=self.export_estimate, wraplength=440,
+                  style='Muted.TLabel').pack(anchor='w', pady=4)
         if pure_osm:
             ttk.Label(export, text='1–2 m/pixel for detailed local maps; 5–10 for larger regions. Finer spacing creates larger files.',
                       wraplength=440, style='Muted.TLabel').pack(anchor='w', pady=4)
@@ -154,7 +157,27 @@ class HybridTab(ttk.Frame):
         self.log = ScrolledText(self, height=12, state='disabled')
         self.log.pack(fill='both', expand=True)
         self.process_display.log = self.log
+        for variable in (self.coordinates, self.resolution, self.imagery, self.use_tiff_bounds, self.render_rasters):
+            variable.trace_add('write', self.update_export_estimate)
+        self.update_export_estimate()
         self.after(100, self.poll)
+
+    def update_export_estimate(self, *_):
+        if not self.render_rasters.get():
+            self.export_estimate.set('QGIS project only; no TIFF will be rendered.')
+            return
+        if not self.pure_osm and self.imagery.get().strip() and self.use_tiff_bounds.get():
+            self.export_estimate.set('TIFF area and output size are checked when the export starts.')
+            return
+        text = self.coordinates.get().strip()
+        if not text:
+            self.export_estimate.set('Choose an area to see the estimated TIFF size.' if self.pure_osm else
+                                     'Using the Download area; output size is checked when the export starts.')
+            return
+        try:
+            self.export_estimate.set(geographic_plan(parse_region(text), float(self.resolution.get())).summary())
+        except ValueError as error:
+            self.export_estimate.set(str(error))
 
     def copy_area(self):
         if self.busy:
@@ -175,19 +198,7 @@ class HybridTab(ttk.Frame):
         return self.tiff_area(imagery)
 
     def tiff_area(self, imagery):
-        script = Path(getattr(sys, '_MEIPASS', Path(__file__).parent)) / 'hybrid_worker.py'
-        inspector = start_worker(self.qgis.get(), script, '--inspect', imagery)
-        output, _ = inspector.communicate()
-        if inspector.returncode:
-            raise ValueError(f'Cannot read hybrid TIFF bounds: {output.strip()}')
-        for line in output.splitlines():
-            try:
-                info = json.loads(line)
-            except ValueError:
-                continue
-            if 'bounds' in info:
-                return Bounds(**info['bounds'])
-        raise ValueError('QGIS did not return hybrid TIFF bounds.')
+        return inspect_tiff_bounds(self.qgis.get(), imagery)
 
     def update_area_summary(self, *_):
         try:
@@ -272,10 +283,12 @@ class HybridTab(ttk.Frame):
     def cancel(self):
         self.cancel_event.set()
         if self.cancel_path:
-            self.cancel_path.touch()
+            request_cancel(self.cancel_path)
         self.status.set('Cancelling… waiting for the current network or QGIS operation.')
 
     def start(self):
+        if self.busy:
+            return
         try:
             import math
             imagery = '' if self.pure_osm else self.imagery.get().strip()
@@ -300,7 +313,6 @@ class HybridTab(ttk.Frame):
                 imagery = str(Path(imagery).expanduser().resolve())
                 if not Path(imagery).is_file():
                     raise ValueError('Satellite TIFF does not exist.')
-            folder.mkdir(parents=True)
             render_rasters = self.render_rasters.get()
             encoding = self.encoding.options()
             display = {'map_mode': 'osm' if self.pure_osm else 'hybrid',
@@ -312,6 +324,8 @@ class HybridTab(ttk.Frame):
                        'place_types': (['city', 'town'] if self.city_names.get() else [])
                                       + (['village'] if self.village_names.get() else [])
                                       + (['hamlet', 'suburb'] if self.small_place_names.get() else [])}
+            if display['osm_style'] not in OSM_STYLES:
+                raise ValueError('Choose Light or Dark OSM styling.')
         except (ValueError, OSError, RuntimeError) as error:
             messagebox.showerror('Cannot create OSM map' if self.pure_osm else 'Cannot create hybrid', str(error))
             return
@@ -333,22 +347,14 @@ class HybridTab(ttk.Frame):
         def work():
             try:
                 selected_bounds = bounds
-                script = Path(getattr(sys, '_MEIPASS', Path(__file__).parent)) / 'hybrid_worker.py'
                 if use_tiff_bounds:
-                    inspector = start_worker(root, script, '--inspect', imagery)
-                    output, _ = inspector.communicate()
-                    if inspector.returncode:
-                        raise RuntimeError(f'Cannot read satellite TIFF bounds: {output.strip()}')
-                    for line in output.splitlines():
-                        try:
-                            info = json.loads(line)
-                        except ValueError:
-                            continue
-                        if 'bounds' in info:
-                            selected_bounds = Bounds(**info['bounds'])
-                    if selected_bounds is None:
-                        raise RuntimeError('QGIS did not return satellite TIFF bounds.')
+                    selected_bounds = inspect_tiff_bounds(root, imagery)
                     self.validate_bounds(selected_bounds)
+                if render_rasters:
+                    plan = geographic_plan(selected_bounds, resolution)
+                    self.events.put(('estimate', plan.summary()))
+                    report('Planned export: ' + plan.summary())
+                folder.mkdir(parents=True)
                 report(f'Local OSM extraction bounds: {selected_bounds.west}, {selected_bounds.south}, {selected_bounds.east}, {selected_bounds.north}')
                 if self.cancel_event.is_set():
                     raise Cancelled()
@@ -369,7 +375,7 @@ class HybridTab(ttk.Frame):
                         'resolution_m': resolution}, indent=2), encoding='utf-8')
                     job_path = Path(temporary) / 'job.json'
                     job_path.write_text(json.dumps(extraction), encoding='utf-8')
-                    import_script = Path(getattr(sys, '_MEIPASS', Path(__file__).parent)) / 'geofabrik_worker.py'
+                    import_script = worker_script('geofabrik_worker.py')
                     self.run_worker(root, import_script, job_path, report)
                     extract_info = json.loads((folder / 'extract-info.json').read_text(encoding='utf-8'))
                     counts = extract_info['counts']
@@ -399,7 +405,7 @@ class HybridTab(ttk.Frame):
                     job.update(encoding)
                     job_path = Path(temporary) / 'job.json'
                     job_path.write_text(json.dumps(job), encoding='utf-8')
-                    script = Path(getattr(sys, '_MEIPASS', Path(__file__).parent)) / 'hybrid_worker.py'
+                    script = worker_script('hybrid_worker.py')
                     self.run_worker(root, script, job_path, report)
             except Cancelled:
                 report('Cancelled. Completed outputs are kept; choose a new folder for another run.')
@@ -418,17 +424,7 @@ class HybridTab(ttk.Frame):
 
     @staticmethod
     def run_worker(root, script, job_path, report):
-        process = start_worker(root, script, job_path)
-        for line in process.stdout:
-            try:
-                report(json.loads(line).get('message', line.strip()))
-            except ValueError:
-                report(line.strip())
-        code = process.wait()
-        if code == 2:
-            raise Cancelled()
-        if code:
-            raise RuntimeError('Processing failed. See the log above. Completed regional downloads and imports are kept.')
+        run_qgis_worker(root, script, job_path, on_event=lambda event: report(event.get('message', '')))
 
     def region_bounds(self):
         text = self.coordinates.get().strip()
@@ -458,6 +454,8 @@ class HybridTab(ttk.Frame):
                 self.encoding.set_busy(False)
                 for control in self.controls:
                     control.configure(state='normal')
+            elif kind == 'estimate':
+                self.export_estimate.set(message)
             else:
                 self.status.set(message)
                 if kind == 'error':

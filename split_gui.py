@@ -3,14 +3,14 @@ import json
 import math
 from pathlib import Path
 import queue
-import sys
 import tempfile
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
-from mosaic_runtime import find_qgis, qgis_command, start_worker
+from mosaic_runtime import find_qgis, qgis_command, run_qgis_worker, worker_script, request_cancel
+from downloader import Cancelled
 from export_gui import CompressionControls
 from process_timing import ProcessDisplay
 
@@ -310,10 +310,12 @@ class SplitTab(ttk.Frame):
 
     def cancel(self):
         if self.cancel_path:
-            self.cancel_path.touch()
+            request_cancel(self.cancel_path)
             self.status.set('Cancelling… completed areas will be kept.')
 
     def start(self, job):
+        if self.busy:
+            return
         try:
             qgis_command(self.qgis.get(), '')
             if not self.workspace:
@@ -339,20 +341,15 @@ class SplitTab(ttk.Frame):
             control.configure(state='disabled')
         self.overview_check.configure(state='disabled')
         self.overview_combo.configure(state='disabled')
-        script = Path(getattr(sys, '_MEIPASS', Path(__file__).parent)) / 'split_worker.py'
+        script = worker_script('split_worker.py')
         def work():
             try:
-                process = start_worker(root, script, job_path)
-                for line in process.stdout:
-                    try:
-                        self.events.put(json.loads(line))
-                    except ValueError:
-                        self.events.put({'kind': 'status', 'message': line.strip()})
-                code = process.wait()
-                if code and code != 2:
-                    self.events.put({'kind': 'failed'})
+                run_qgis_worker(root, script, job_path, on_event=self.events.put)
+            except Cancelled:
+                self.events.put({'kind': 'status', 'message': 'Cancelled. Completed areas were kept.'})
             except Exception as error:
                 self.events.put({'kind': 'error', 'message': str(error)})
+                self.events.put({'kind': 'failed'})
             finally:
                 self.events.put({'kind': 'done', 'finished': self.process_display.stamp()})
         threading.Thread(target=work, daemon=True).start()

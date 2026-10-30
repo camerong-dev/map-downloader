@@ -680,3 +680,21 @@ and `osm.qgz`, and is recorded in the export manifest and TIFF metadata. Road
 selection, English names, OSM size and pixel spacing work with either style.
 Regenerate existing TIFFs to apply a different style. Hybrid overlays retain their
 own styling.
+
+### Reliability and export planning
+
+OSM and hybrid coordinate inputs now show estimated dimensions, render-block
+counts and size before compression (excluding viewing overviews). TIFF-derived
+bounds are checked at export start and the same estimate is then shown. The GUI
+and renderer share these calculations; finer resolution can increase pixel counts
+and storage requirements substantially. Vector-only QGIS projects do not allocate
+the estimated TIFF pixels.
+
+Worker diagnostics now retain native exit information and cancellation is handled
+consistently across processing tabs. Closing while work is active signals all
+active jobs; close again once they have stopped. The process log retains its most
+recent 10,000 lines. Exports in the same application instance coordinate reuse of
+a shared Geofabrik download instead of writing the same partial file concurrently.
+
+See [the application review](docs/application-review.md) for the refactors,
+verification evidence and prioritised follow-ups.

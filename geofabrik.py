@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import time
 import re
+import threading
+from contextlib import contextmanager
 from http.client import IncompleteRead
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -18,6 +20,28 @@ LICENSE = 'https://opendatacommons.org/licenses/odbl/1-0/'
 NETWORK_TIMEOUT = 90
 RETRY_DELAYS = (5, 15)
 HEADERS = {'User-Agent': 'ESARegionDownloader/1.0 (Geofabrik offline hybrid maps)'}
+
+_cache_locks = {}
+_cache_locks_guard = threading.Lock()
+
+
+@contextmanager
+def source_cache_lock(target, cancel, report):
+    """Coordinate hybrid/OSM tab downloads without blocking cancellation."""
+    key = os.path.normcase(str(target.resolve()))
+    with _cache_locks_guard:
+        lock = _cache_locks.setdefault(key, threading.Lock())
+    waiting = False
+    while not lock.acquire(timeout=0.2):
+        check_cancel(cancel)
+        if not waiting:
+            report('Waiting for another export to prepare the same cached OSM source…')
+            waiting = True
+    try:
+        check_cancel(cancel)
+        yield
+    finally:
+        lock.release()
 
 
 def retry_network(operation, stage, cancel, report):
@@ -157,6 +181,11 @@ def obtain(source, cache_dir, cancel, report, refresh=False):
     cache_dir.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha256(source.encode()).hexdigest()[:16]
     target = cache_dir / f'{key}-{Path(urlsplit(source).path).name}'
+    with source_cache_lock(target, cancel, report):
+        return obtain_remote(source, target, cancel, report, refresh)
+
+
+def obtain_remote(source, target, cancel, report, refresh):
     metadata_path = target.with_suffix('.json')
     if target.is_file() and metadata_path.is_file() and not refresh:
         try:

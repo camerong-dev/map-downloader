@@ -271,24 +271,19 @@ class App(tk.Tk):
         self.after(100, self.poll)
 
     def close(self):
-        if self.osm.busy:
-            self.osm.cancel()
-            return
-        if self.hybrid.busy:
-            self.hybrid.cancel()
-            return
-        if self.splitter.busy:
-            self.splitter.cancel()
-            return
-        if self.mosaic.busy:
-            self.mosaic.cancel()
-            return
+        active = False
+        for tab in (self.osm, self.hybrid, self.splitter, self.mosaic):
+            if tab.busy:
+                active = True
+                tab.cancel()
         if self.busy:
+            active = True
             self.cancel.set()
-            self.status.set('Cancelling… wait for the current network request to finish, then close.')
-        else:
-            self.splitter.cleanup()
-            self.destroy()
+        if active:
+            self.status.set('Cancelling active work… close again once all processes have stopped.')
+            return
+        self.splitter.cleanup()
+        self.destroy()
 
 
 if __name__ == '__main__':

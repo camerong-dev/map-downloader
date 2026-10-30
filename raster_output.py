@@ -3,9 +3,37 @@ import math
 import tempfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
+from contextlib import contextmanager
 from osgeo import gdal, osr
 
 TARGET_CRS = 'EPSG:3857'
+
+
+@contextmanager
+def gdal_config(**options):
+    previous = {name: gdal.GetConfigOption(name) for name in options}
+    try:
+        for name, value in options.items():
+            gdal.SetConfigOption(name, value)
+        yield
+    finally:
+        for name, value in previous.items():
+            gdal.SetConfigOption(name, value)
+
+
+def copy_dataset_mask(source, target, src_win=None, callback=None):
+    """Copy a shared validity mask in bounded blocks, independent of source lifetime."""
+    x0, y0 = src_win[:2] if src_win is not None else (0, 0)
+    target.CreateMaskBand(gdal.GMF_PER_DATASET)
+    source_mask = source.GetRasterBand(1).GetMaskBand()
+    target_mask = target.GetRasterBand(1).GetMaskBand()
+    for y in range(0, target.RasterYSize, 512):
+        if callback is not None and not callback(y / target.RasterYSize, '', None):
+            raise RuntimeError('Export cancelled.')
+        for x in range(0, target.RasterXSize, 512):
+            w, h = min(512, target.RasterXSize - x), min(512, target.RasterYSize - y)
+            target_mask.WriteRaster(x, y, w, h, source_mask.ReadRaster(x0 + x, y0 + y, w, h))
+    target_mask.FlushCache()
 
 
 def compression_options(job):
@@ -34,13 +62,35 @@ def export_geotiff(ds, path, job, src_win=None, callback=None):
     options = compression_options(job)
     kwargs = {'srcWin': src_win} if src_win is not None else {}
     if job.get('compression', 'DEFLATE').upper() != 'JPEG':
-        previous = gdal.GetConfigOption('GDAL_TIFF_INTERNAL_MASK')
-        try:
-            gdal.SetConfigOption('GDAL_TIFF_INTERNAL_MASK', 'YES')
-            return gdal.Translate(str(path), ds, format='GTiff', overviewLevel='NONE',
-                                  creationOptions=options, callback=callback, **kwargs)
-        finally:
-            gdal.SetConfigOption('GDAL_TIFF_INTERNAL_MASK', previous)
+        ds.FlushCache()
+        read_source = ds
+        if (ds.GetDriver().ShortName == 'GTiff' and
+                'JPEG' in ds.GetMetadata('IMAGE_STRUCTURE').get('COMPRESSION', '').upper()):
+            # A freshly written JPEG TIFF must be read through a separate
+            # decoder: reusing its live writer can crash GDAL CreateCopy.
+            read_source = gdal.Open(ds.GetDescription(), gdal.GA_ReadOnly)
+        flags = ds.GetRasterBand(1).GetMaskFlags()
+        shared_mask = bool(flags & gdal.GMF_PER_DATASET and not flags & gdal.GMF_ALPHA)
+        result = None
+        with gdal_config(GDAL_TIFF_INTERNAL_MASK='YES'):
+            try:
+                # GDAL's automatic CreateCopy mask path can crash for a live
+                # JPEG TIFF with an internal mask. Copy its mask explicitly.
+                mask = {'maskBand': 'none'} if shared_mask else {}
+                result = gdal.Translate(str(path), read_source, format='GTiff', overviewLevel='NONE',
+                                        creationOptions=options, callback=callback, **kwargs, **mask)
+                if result is not None:
+                    if shared_mask:
+                        copy_dataset_mask(ds, result, src_win, callback)
+                    result.FlushCache()
+                return result
+            except Exception:
+                if result is not None:
+                    result.Close()
+                raise
+            finally:
+                if read_source is not ds:
+                    read_source.Close()
     with tempfile.TemporaryDirectory(prefix='jpeg-render-', dir=Path(path).parent) as folder:
         source = ds
         render = None

@@ -129,6 +129,23 @@ class CompressionTests(unittest.TestCase):
         result.Close()
         ds.Close()
 
+    def test_live_jpeg_writer_can_be_cropped_to_independent_lossless_output(self):
+        source = gdal.Open(str(self.source))
+        master_path = self.root / 'live-jpeg.tif'
+        master = export_geotiff(source, master_path, self.job)
+        source.Close()
+        target = self.root / 'cropped-lossless.tif'
+        result = export_geotiff(master, target, {'compression': 'DEFLATE'}, src_win=[32, 32, 300, 300])
+        result.Close()
+        master.Close()
+        decoded = gdal.Open(str(master_path))
+        expected_pixels = decoded.ReadAsArray()[:, 32:332, 32:332]
+        decoded.Close()
+        result = gdal.Open(str(target))
+        np.testing.assert_array_equal(result.ReadAsArray(), expected_pixels)
+        np.testing.assert_array_equal(result.GetRasterBand(1).GetMaskBand().ReadAsArray(), self.alpha[32:332, 32:332])
+        result.Close()
+
     def test_qgis_renders_internal_mask_as_transparent(self):
         source = gdal.Open(str(self.source))
         output = self.root / 'masked.tif'

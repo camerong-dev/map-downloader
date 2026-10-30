@@ -180,3 +180,64 @@ class GeofabrikTests(unittest.TestCase):
         with self.assertRaises(HTTPError):
             retry_network(operation, 'Checksum', cancel, lambda m: None)
         operation.assert_called_once()
+
+
+    def test_concurrent_exports_share_one_completed_download(self):
+        entered, release, waiting = threading.Event(), threading.Event(), threading.Event()
+        body = b'one verified cached source'
+        digest = hashlib.md5(body, usedforsecurity=False).hexdigest()
+        results, errors = [], []
+        def transfer(source, partial, checksum, cancel, report):
+            entered.set()
+            if not release.wait(3):
+                raise RuntimeError('Test download was not released')
+            partial.write_bytes(body)
+            return len(body), 'Test date'
+        def report(message):
+            if message.startswith('Waiting for another export'):
+                waiting.set()
+        def obtain_in_thread():
+            try:
+                results.append(obtain(DEFAULT_SOURCE, self.folder, threading.Event(), report))
+            except Exception as error:
+                errors.append(error)
+        with patch('geofabrik.fetch_checksum', return_value=digest), patch('geofabrik.transfer', side_effect=transfer) as download:
+            first = threading.Thread(target=obtain_in_thread)
+            second = threading.Thread(target=obtain_in_thread)
+            first.start()
+            self.assertTrue(entered.wait(2))
+            second.start()
+            try:
+                self.assertTrue(waiting.wait(2))
+            finally:
+                release.set()
+                first.join(3)
+                second.join(3)
+            self.assertFalse(first.is_alive() or second.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(len(results), 2)
+            self.assertEqual(results[0][0], results[1][0])
+            download.assert_called_once()
+            self.assertEqual(results[0][0].read_bytes(), body)
+
+    def test_waiting_for_cached_source_can_be_cancelled(self):
+        from geofabrik import source_cache_lock
+        cancel = threading.Event()
+        errors = []
+        waiting = threading.Event()
+        def worker():
+            try:
+                with source_cache_lock(self.folder/'same.pbf', cancel, lambda message: waiting.set()):
+                    errors.append('Unexpectedly acquired lock')
+            except Cancelled:
+                pass
+        with source_cache_lock(self.folder/'same.pbf', threading.Event(), lambda message: None):
+            thread = threading.Thread(target=worker)
+            thread.start()
+            try:
+                self.assertTrue(waiting.wait(2))
+                cancel.set()
+            finally:
+                thread.join(3)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])

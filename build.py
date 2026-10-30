@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import sys
+from mosaic_runtime import WORKER_RESOURCES
 
 
 def main():
@@ -11,7 +12,7 @@ def main():
     root = Path(__file__).resolve().parent
     args = ['--noconfirm', '--clean', '--onefile', '--windowed', '--name', 'ESARegionDownloader',
             '--distpath', str(root / 'dist'), '--workpath', str(root / 'build'), '--specpath', str(root)]
-    for name in ['mosaic_worker.py', 'split_worker.py', 'hybrid_worker.py', 'hybrid_style.py', 'geofabrik_worker.py', 'raster_output.py']:
+    for name in WORKER_RESOURCES:
         args += ['--add-data', str(root / name) + os.pathsep + '.']
     PyInstaller.__main__.run(args + [str(root / 'app.py')])
 

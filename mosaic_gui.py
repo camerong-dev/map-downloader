@@ -2,14 +2,14 @@
 import json
 from pathlib import Path
 import queue
-import sys
 import tempfile
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
-from mosaic_runtime import find_qgis, start_worker
+from mosaic_runtime import find_qgis, run_qgis_worker, worker_script, request_cancel
+from downloader import Cancelled
 from export_gui import CompressionControls
 from process_timing import ProcessDisplay
 from gui_style import section
@@ -132,10 +132,13 @@ class MosaicTab(ttk.Frame):
 
     def cancel(self):
         if self.cancel_path:
-            self.cancel_path.touch()
+            request_cancel(self.cancel_path)
             self.status.set('Cancelling safely… temporary processing files will be removed.')
 
     def start(self):
+        if self.busy:
+            return
+        workspace = None
         try:
             if not self.files:
                 raise ValueError('Add at least one imagery TIFF.')
@@ -157,16 +160,20 @@ class MosaicTab(ttk.Frame):
             # Validate before starting the background task.
             from mosaic_runtime import qgis_command
             qgis_command(root, '')
+            encoding = self.encoding.options()
             output.parent.mkdir(parents=True, exist_ok=True)
             workspace = tempfile.TemporaryDirectory(prefix='esa-job-', dir=output.parent)
             self.cancel_path = Path(workspace.name) / 'cancel'
             job = {'inputs': list(self.files), 'output': str(output), 'bands': bands,
                    'mode': self.mode.get(), 'minimum': minimum, 'maximum': maximum,
                    'cancel': str(self.cancel_path)}
-            job.update(self.encoding.options())
+            job.update(encoding)
             job_path = Path(workspace.name) / 'job.json'
             job_path.write_text(json.dumps(job), encoding='utf-8')
         except (ValueError, OSError) as error:
+            if workspace is not None:
+                workspace.cleanup()
+            self.cancel_path = None
             messagebox.showerror('Cannot process TIFFs', str(error))
             return
         self.busy = True
@@ -178,20 +185,13 @@ class MosaicTab(ttk.Frame):
         self.cancel_button.configure(state='normal')
         for button in self.edit_buttons:
             button.configure(state='disabled')
-        script = Path(getattr(sys, '_MEIPASS', Path(__file__).parent)) / 'mosaic_worker.py'
+        script = worker_script('mosaic_worker.py')
         def work():
             try:
-                process = start_worker(root, script, job_path)
-                for line in process.stdout:
-                    try:
-                        self.events.put(('message', json.loads(line)))
-                    except ValueError:
-                        self.events.put(('message', {'message': line.strip()}))
-                result = process.wait()
-                if result == 2:
-                    self.events.put(('message', {'message': 'Cancelled. Original TIFFs are unchanged.'}))
-                elif result:
-                    self.events.put(('error', 'Processing failed. See the log for details.'))
+                run_qgis_worker(root, script, job_path,
+                                on_event=lambda event: self.events.put(('message', event)))
+            except Cancelled:
+                self.events.put(('message', {'message': 'Cancelled. Original TIFFs are unchanged.'}))
             except Exception as error:
                 self.events.put(('error', str(error)))
             finally:

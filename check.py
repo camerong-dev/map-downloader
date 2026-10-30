@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import json
 
 from mosaic_runtime import find_qgis, start_worker
 
@@ -39,6 +40,7 @@ def main():
         results.append((name, code, seconds))
         print(f'{"PASS" if code == 0 else "FAIL"} {name} ({seconds:g}s)', flush=True)
         if code:
+            print(f'Exit code: {code} (0x{code & 0xffffffff:08X})', flush=True)
             print(log.read_text(encoding='utf-8', errors='replace')[-6000:], flush=True)
 
     run('unit-tests', command=[sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-v'])
@@ -48,6 +50,9 @@ def main():
         run('gui-smoke', command=[sys.executable, str(root / 'tests' / 'gui_smoke.py')])
     summary = '\n'.join(f'{"PASS" if code == 0 else "FAIL"} {name} ({seconds:g}s)' for name, code, seconds in results)
     (reports / 'summary.txt').write_text(summary + '\n', encoding='utf-8')
+    (reports / 'results.json').write_text(json.dumps([
+        {'suite': name, 'passed': code == 0, 'exit_code': code, 'seconds': seconds}
+        for name, code, seconds in results], indent=2), encoding='utf-8')
     print(f'Reports: {reports}', flush=True)
     return int(any(code for _, code, _ in results))
 

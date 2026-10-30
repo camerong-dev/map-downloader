@@ -54,6 +54,7 @@ class OperationClock:
 
 class ProcessDisplay(ttk.Frame):
     """Observe an existing status variable; callers keep all existing status logic."""
+    MAX_LOG_LINES = 10000
     def __init__(self, parent, status, wraplength=760):
         super().__init__(parent)
         self.clock = OperationClock()
@@ -87,6 +88,9 @@ class ProcessDisplay(ttk.Frame):
         lines = [f'[{timestamp}{elapsed}] {line}\n' for line in str(message).splitlines() if line.strip()]
         self.log.configure(state='normal')
         self.log.insert('end', ''.join(lines))
+        line_count = int(self.log.index('end-1c').split('.')[0])
+        if line_count > self.MAX_LOG_LINES:
+            self.log.delete('1.0', f'{line_count - self.MAX_LOG_LINES + 1}.0')
         self.log.see('end')
         self.log.configure(state='disabled')
 
