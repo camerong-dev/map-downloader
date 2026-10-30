@@ -171,6 +171,65 @@ class SplitTests(unittest.TestCase):
                 run(job)
         self.assertEqual(list(Path(job['output']).glob('*.tif')), [])
 
+    def test_polygon_crops_and_masks_without_changing_pixels(self):
+        job = self.job()
+        job['polygon'] = [[1, 1], [9, 1], [1, 6]]
+        run(job)
+        ds = gdal.Open(str(Path(job['output']) / 'area_polygon.tif'))
+        self.assertEqual((ds.RasterXSize, ds.RasterYSize), (8, 5))
+        np.testing.assert_array_equal(ds.ReadAsArray(), self.data[1:6, 1:9])
+        mask = ds.GetRasterBand(1).GetMaskBand().ReadAsArray()
+        self.assertEqual(mask[0, 0], 255)
+        self.assertEqual(mask[-1, -1], 0)
+        self.assertEqual(ds.GetRasterBand(1).GetScale(), 0.0001)
+        self.assertAlmostEqual(ds.GetGeoTransform()[0], -61.99)
+        ds = None
+
+    def test_polygon_keeps_source_nodata(self):
+        job = self.job()
+        job['polygon'] = [[0, 0], [11, 0], [11, 7], [0, 7]]
+        run(job)
+        ds = gdal.Open(str(Path(job['output']) / 'area_polygon.tif'))
+        np.testing.assert_array_equal(ds.GetRasterBand(1).GetMaskBand().ReadAsArray(), (self.data > 0).astype(np.uint8)*255)
+        ds = None
+
+    def test_polygon_rgb_alpha_and_jpeg_transparency(self):
+        for compression in ('DEFLATE', 'JPEG'):
+            with self.subTest(compression=compression):
+                path = self.root / 'rgba.tif'
+                source = gdal.GetDriverByName('GTiff').Create(str(path), 11, 7, 4, gdal.GDT_Byte)
+                template = gdal.Open(str(self.path))
+                source.SetProjection(template.GetProjection())
+                source.SetGeoTransform(template.GetGeoTransform())
+                template = None
+                for index in (1, 2, 3):
+                    source.GetRasterBand(index).Fill(100)
+                alpha = np.full((7, 11), 255, dtype=np.uint8)
+                alpha[1, 1] = 0
+                source.GetRasterBand(4).WriteArray(alpha)
+                source.GetRasterBand(4).SetColorInterpretation(gdal.GCI_AlphaBand)
+                source = None
+                job = self.job()
+                job.update(inputs=[str(path)], compression=compression,
+                           output=str(self.root / compression), polygon=[[1, 1], [9, 1], [1, 6]])
+                run(job)
+                ds = gdal.Open(str(Path(job['output']) / 'area_polygon.tif'))
+                mask = ds.GetRasterBand(1).GetMaskBand().ReadAsArray()
+                self.assertEqual(mask[0, 0], 0)
+                self.assertEqual(mask[0, 1], 255)
+                self.assertEqual(mask[-1, -1], 0)
+                if compression == 'DEFLATE':
+                    self.assertEqual(ds.GetRasterBand(4).ReadAsArray()[-1, -1], 0)
+                ds = None
+
+    def test_invalid_polygon_does_not_create_output(self):
+        for points in ([[1, 1], [8, 6], [8, 1], [1, 6]], [[0, 0], [1, 1]], [[-1, 0], [5, 0], [5, 5]]):
+            job = self.job()
+            job['polygon'] = points
+            with self.assertRaises(ValueError):
+                run(job)
+            self.assertFalse(Path(job['output']).exists())
+
     def test_invalid_grid(self):
         with self.assertRaises(ValueError):
             grid_windows(11, 7, 8, 2)

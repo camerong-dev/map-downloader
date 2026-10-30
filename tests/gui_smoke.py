@@ -35,6 +35,27 @@ def main(search, tile_image):
             assert tab.log.winfo_rooty() + tab.log.winfo_height() <= app.winfo_rooty() + app.winfo_height()
         app.withdraw()
         app.update_idletasks()
+        import tkinter as tk
+        split = app.splitter
+        split.info = {'width': 100, 'height': 100, 'bytes_per_pixel': 3}
+        split.photo = tk.PhotoImage(master=app, width=100, height=100)
+        split.selection_mode.set('Draw polygon')
+        split.draw()
+        left, top, iw, ih = split.image_box
+        for u, v in [(0.1, 0.1), (0.9, 0.1), (0.1, 0.9)]:
+            split.click(SimpleNamespace(x=left+iw*u, y=top+ih*v))
+        split.finish_polygon()
+        assert split.polygon_closed
+        original = list(split.polygon)
+        split.change_zoom(1)
+        assert split.polygon == original
+        split.undo_point()
+        assert not split.polygon_closed and len(split.polygon) == 2
+        split.clear_selection()
+        assert not split.polygon
+        split.info = split.photo = None
+        split.selection_mode.set('Grid')
+        split.draw()
         assert app.splitter.create_overview.get()
         assert app.splitter.overview_resolution.get() == '100'
         assert app.mosaic.maximum.get() == '0.40'

@@ -30,11 +30,14 @@ class SplitTab(ttk.Frame):
         self._display_key = None
         self._drag_origin = None
         self.selected = set()
+        self.polygon = []
+        self.polygon_closed = False
+        self.selection_mode = tk.StringVar(value='Grid')
         self.events = queue.Queue()
         self.workspace = None
         self.cancel_path = None
         ttk.Label(self, text='Split maps visually', style='Title.TLabel').pack(anchor='w')
-        ttk.Label(self, text='EPSG:3857 preview & exports. Click the grid areas you want to export; selected areas turn yellow.').pack(anchor='w', pady=5)
+        ttk.Label(self, text='Select grid cells or draw a polygon to trace the area you want to export.').pack(anchor='w', pady=5)
         runtime = ttk.Frame(self)
         runtime.pack(fill='x', pady=4)
         ttk.Label(runtime, text='QGIS folder').pack(side='left', padx=(0, 8))
@@ -60,6 +63,15 @@ class SplitTab(ttk.Frame):
             variable.trace_add('write', self.grid_changed)
         ttk.Button(grid, text='Select all', command=self.select_all).pack(side='left')
         ttk.Button(grid, text='Clear selection', command=self.clear_selection).pack(side='left', padx=5)
+        drawing = grid
+        for mode in ('Grid', 'Draw polygon'):
+            control = ttk.Radiobutton(drawing, text=mode, value=mode, variable=self.selection_mode, command=self.draw)
+            control.pack(side='left', padx=(0, 10))
+            self.grid_controls.append(control)
+        for label, command in [('Finish outline', self.finish_polygon), ('Undo point', self.undo_point)]:
+            control = ttk.Button(drawing, text=label, command=command)
+            control.pack(side='left', padx=4)
+            self.grid_controls.append(control)
         view = ttk.Frame(self)
         view.pack(fill='x', pady=2)
         ttk.Button(view, text='−', width=3, command=lambda: self.change_zoom(-1)).pack(side='left')
@@ -67,7 +79,7 @@ class SplitTab(ttk.Frame):
         ttk.Button(view, text='Fit map', command=self.fit_map).pack(side='left')
         self.zoom_label = tk.StringVar(value='Preview 100%')
         ttk.Label(view, textvariable=self.zoom_label).pack(side='left', padx=10)
-        ttk.Label(view, text='Wheel to zoom • Drag to pan • Click to select').pack(side='left')
+        ttk.Label(view, text='Wheel: zoom • Drag: pan • Polygon: click points, then Finish outline').pack(side='left')
         self.canvas = tk.Canvas(self, background='#23313b', height=200, highlightthickness=0)
         self.canvas.pack(fill='both', expand=True, pady=8)
         self.canvas.bind('<Configure>', self.canvas_resized)
@@ -84,6 +96,8 @@ class SplitTab(ttk.Frame):
         self.canvas.bind('<Key-equal>', lambda _: self.change_zoom(1))
         self.canvas.bind('<Key-minus>', lambda _: self.change_zoom(-1))
         self.canvas.bind('<Motion>', self.hover)
+        self.canvas.bind('<Return>', lambda _: self.finish_polygon())
+        self.canvas.bind('<BackSpace>', lambda _: self.undo_point())
         self.summary = tk.StringVar(value='The map and split lines will appear here.')
         ttk.Label(self, textvariable=self.summary, wraplength=780).pack(anchor='w')
         self.details = tk.StringVar(value='Grid areas follow the raster pixels; north is at the top.')
@@ -227,6 +241,8 @@ class SplitTab(ttk.Frame):
     def clear_selection(self):
         if not self.busy:
             self.selected.clear()
+            self.polygon.clear()
+            self.polygon_closed = False
             self.draw()
 
     def load(self):
@@ -241,6 +257,8 @@ class SplitTab(ttk.Frame):
         self.fit_following = True
         self.pan_x = self.pan_y = 0
         self.selected.clear()
+        self.polygon.clear()
+        self.polygon_closed = False
         self.draw()
         if self.workspace:
             self.workspace.cleanup()
@@ -260,13 +278,17 @@ class SplitTab(ttk.Frame):
 
     def export(self):
         try:
-            rows, columns = self.shape()
+            drawing = self.selection_mode.get() == 'Draw polygon'
+            rows, columns = (1, 1) if drawing else self.shape()
             if not self.info:
                 raise ValueError('Load TIFFs and wait for the map preview first.')
             if not self.output.get().strip():
                 raise ValueError('Choose an output location.')
             selected = sorted(self.selected)
-            if not selected:
+            if drawing:
+                if not self.polygon_closed:
+                    raise ValueError('Draw at least three points and choose Finish outline first.')
+            elif not selected:
                 raise ValueError('Select at least one area by clicking it on the map.')
             overview_resolution = float(self.overview_resolution.get())
             if self.create_overview.get():
@@ -275,6 +297,7 @@ class SplitTab(ttk.Frame):
                     raise ValueError('Choose an overview spacing larger than the detailed pixel spacing.')
             self.start({'action': 'export', 'rows': rows, 'columns': columns,
                         'selected': selected, 'output': self.output.get(),
+                        'polygon': self.polygon if drawing else None,
                         'create_overview': self.create_overview.get(), 'overview_resolution': overview_resolution,
                         **self.encoding.options()})
         except ValueError as error:
@@ -337,7 +360,7 @@ class SplitTab(ttk.Frame):
                                     text='Load TIFFs to see your map and split grid', fill='white')
             return
         try:
-            rows, columns = self.shape()
+            rows, columns = (1, 1) if self.selection_mode.get() == 'Draw polygon' else self.shape()
         except ValueError as error:
             self.summary.set(str(error))
             return
@@ -348,6 +371,20 @@ class SplitTab(ttk.Frame):
         self.image_box = left, top, iw, ih
         self.canvas.create_image(left, top, image=self.display_photo, anchor='nw')
         width, height = self.info['width'], self.info['height']
+        if self.selection_mode.get() == 'Draw polygon':
+            coords = [(left + x / width * iw, top + y / height * ih) for x, y in self.polygon]
+            flat = [v for point in coords for v in point]
+            if len(coords) >= 2:
+                if self.polygon_closed:
+                    self.canvas.create_polygon(*flat, outline='#ffe34d', fill='#ffe34d', stipple='gray12', width=3)
+                else:
+                    self.canvas.create_line(*flat, fill='#ffe34d', width=3)
+            for x, y in coords:
+                self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='#ffe34d', outline='black')
+            self.summary.set(f'{len(coords)} outline points • ' + ('Ready to export' if self.polygon_closed else 'Click along the border, then Finish outline. Undo point to correct it.'))
+            self.details.set('Outside the outline is masked out. Drag to pan; zoom to trace borders more closely. Clear selection to start again.')
+            self.export_button.configure(state='normal' if self.polygon_closed and not self.busy else 'disabled')
+            return
         for r in range(rows):
             for c in range(columns):
                 i = r * columns + c
@@ -380,7 +417,31 @@ class SplitTab(ttk.Frame):
         r = min(rows - 1, next((i for i in range(rows) if py < (i + 1) * self.info['height'] // rows), rows - 1))
         return r, c, rows, columns
 
+    def finish_polygon(self):
+        if self.busy or self.selection_mode.get() != 'Draw polygon':
+            return
+        if len(self.polygon) < 3:
+            self.summary.set('Add at least three points before finishing the outline.')
+            return
+        self.polygon_closed = True
+        self.draw()
+
+    def undo_point(self):
+        if not self.busy and self.selection_mode.get() == 'Draw polygon':
+            self.polygon_closed = False
+            if self.polygon:
+                self.polygon.pop()
+            self.draw()
+
     def click(self, event):
+        if self.selection_mode.get() == 'Draw polygon':
+            if self.busy or not self.info or not self.photo or self.polygon_closed:
+                return
+            left, top, iw, ih = self.image_box
+            if left <= event.x <= left + iw and top <= event.y <= top + ih:
+                self.polygon.append(((event.x-left)/iw*self.info['width'], (event.y-top)/ih*self.info['height']))
+                self.draw()
+            return
         cell = self.cell_at(event)
         if cell and not self.busy:
             r, c, _, columns = cell
@@ -389,6 +450,8 @@ class SplitTab(ttk.Frame):
             self.draw()
 
     def hover(self, event):
+        if self.selection_mode.get() == 'Draw polygon':
+            return
         cell = self.cell_at(event)
         if cell:
             r, c, rows, columns = cell

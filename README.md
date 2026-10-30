@@ -401,6 +401,15 @@ TIFFs into smaller geographic areas:
    check mark; click again to deselect. **Select all** and **Clear selection** handle
    the whole grid. Changing the rows/columns clears the selection. Hover to see exact
    pixel dimensions and bounds in EPSG:3857 metres.
+   Alternatively, select **Draw polygon** and click successive points along the
+   border you want to follow. Drag to pan and use the wheel to zoom between points.
+   Choose **Finish outline** (or Enter) to close it. **Undo point** (or Backspace)
+   reopens the outline and removes the last point; **Clear selection** starts again.
+   Export creates `area_polygon.tif`, cropped to the outline's pixel-aligned bounds,
+   with everything outside the polygon masked out. Existing nodata/alpha validity
+   is preserved, as are source resolution and pixel values in lossless exports.
+   Outlines must not cross themselves. Grid and polygon selections are retained
+   separately; the active mode determines what is exported.
 4. Choose an output location. The app proposes a new subfolder.
 5. Leave **Create whole-region overview** enabled and choose **50, 100, 250 or 500**
    EPSG:3857 metres per pixel (default **100**). Uncheck it to export detailed areas only.
