@@ -341,7 +341,85 @@ def mask_water(dem_path, water_layers, job, emit):
         dem.Close()
 
 
-def terrain_layers(folder, extent, project, job, emit, water_layers=()):
+def feature_coverage(folder, sources, job, emit):
+    """Approximate unknown local-extract coverage with a bounded-memory hull."""
+    from osgeo import gdal, ogr, osr
+    emit('Finding the terrain boundary from the selected OSM features…')
+    combined = ogr.Geometry(ogr.wkbGeometryCollection)
+    target_srs = osr.SpatialReference()
+    target_srs.ImportFromEPSG(4326)
+    target_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    for name in ('roads','places','map_areas','map_lines'):
+        if name not in sources:
+            continue
+        check_cancel(job)
+        source = gdal.OpenEx(sources[name], gdal.OF_VECTOR)
+        layer = source.GetLayer(0)
+        cloud = ogr.Geometry(ogr.wkbGeometryCollection)
+        try:
+            for position, feature in enumerate(layer):
+                if position % 2000 == 0:
+                    check_cancel(job)
+                    if not cloud.IsEmpty():
+                        hull = cloud.ConvexHull()
+                        cloud = ogr.Geometry(ogr.wkbGeometryCollection)
+                        cloud.AddGeometry(hull)
+                geometry = feature.GetGeometryRef()
+                if geometry is None or geometry.IsEmpty():
+                    continue
+                west,east,south,north = geometry.GetEnvelope()
+                for x,y in ((west,south),(west,north),(east,south),(east,north)):
+                    point = ogr.Geometry(ogr.wkbPoint)
+                    point.AddPoint_2D(x,y)
+                    cloud.AddGeometry(point)
+            if not cloud.IsEmpty():
+                hull = cloud.ConvexHull()
+                source_srs = layer.GetSpatialRef().Clone()
+                source_srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+                hull.Transform(osr.CoordinateTransformation(source_srs,target_srs))
+                combined.AddGeometry(hull)
+        finally:
+            feature = layer = source = None
+    if combined.IsEmpty():
+        raise ValueError('Cannot determine an OSM region for terrain shading.')
+    hull = combined.ConvexHull()
+    if hull.GetDimension() < 2:
+        hull = hull.Buffer(0.001)
+    path = folder/'terrain-coverage.geojson'
+    path.write_text(json.dumps({'type':'FeatureCollection','features':[
+        {'type':'Feature','properties':{'source':'OSM feature hull'},'geometry':json.loads(hull.ExportToJson())}]}),encoding='utf-8')
+    return path
+
+
+def mask_coverage(dem_path, coverage, job, emit):
+    """Keep relief inside the union of region polygons, preserving holes."""
+    from osgeo import gdal
+    check_cancel(job)
+    emit('Trimming terrain to the OSM region boundary…')
+    dem = gdal.Open(str(dem_path),gdal.GA_Update)
+    source = mask = layer = None
+    try:
+        mask = gdal.GetDriverByName('MEM').Create('',dem.RasterXSize,dem.RasterYSize,1,gdal.GDT_Byte)
+        mask.SetGeoTransform(dem.GetGeoTransform())
+        mask.SetProjection(dem.GetProjection())
+        source = gdal.OpenEx(str(coverage),gdal.OF_VECTOR)
+        layer = source.GetLayer(0)
+        gdal.RasterizeLayer(mask,[1],layer,burn_values=[1],
+            callback=lambda f,m,d: 0 if Path(job['cancel']).exists() else 1)
+        band = dem.GetRasterBand(1)
+        for y in range(0,dem.RasterYSize,256):
+            check_cancel(job)
+            height = min(256,dem.RasterYSize-y)
+            inside = mask.GetRasterBand(1).ReadAsArray(0,y,dem.RasterXSize,height)
+            values = band.ReadAsArray(0,y,dem.RasterXSize,height)
+            values[inside == 0] = NODATA
+            band.WriteArray(values,0,y)
+    finally:
+        layer = source = mask = None
+        dem.Close()
+
+
+def terrain_layers(folder, extent, project, job, emit, water_layers=(), coverage_sources=None):
     from qgis.core import (Qgis, QgsRasterLayer, QgsVectorLayer, QgsLineSymbol,
                            QgsSingleSymbolRenderer, QgsPalLayerSettings, QgsTextFormat,
                            QgsTextBufferSettings, QgsVectorLayerSimpleLabeling, QgsBilinearRasterResampler)
@@ -355,6 +433,12 @@ def terrain_layers(folder, extent, project, job, emit, water_layers=()):
         dem, info = local_dem(folder,bounds,options.dem,job,emit)
     else:
         dem, info = automatic_dem(folder,bounds,job,emit)
+    coverage = folder/'terrain-coverage.geojson'
+    if not coverage.is_file() and coverage_sources:
+        coverage = feature_coverage(folder,coverage_sources,job,emit)
+    if coverage.is_file():
+        mask_coverage(dem,coverage,job,emit)
+        info['coverage'] = coverage.name
     mask_water(dem, water_layers, job, emit)
     info.update(options.job_options())
     info['elevation_units'] = 'metres'

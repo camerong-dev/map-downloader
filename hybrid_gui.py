@@ -10,7 +10,7 @@ from tkinter.scrolledtext import ScrolledText
 
 from downloader import Bounds, Cancelled, parse_region
 from mosaic_runtime import find_qgis, qgis_command, run_qgis_worker, worker_script, request_cancel, inspect_tiff_bounds
-from geofabrik import ATTRIBUTION, LICENSE, DEFAULT_SOURCE, obtain, validate_sources
+from geofabrik import ATTRIBUTION, LICENSE, DEFAULT_SOURCE, obtain, validate_sources, obtain_region_polygon
 from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS, osm_display_scale, OSM_STYLES
 from export_gui import CompressionControls
 from process_timing import ProcessDisplay
@@ -367,12 +367,19 @@ class HybridTab(ttk.Frame):
                 with tempfile.TemporaryDirectory(prefix='esa-hybrid-') as temporary:
                     self.cancel_path = Path(temporary) / 'cancel'
                     cache_dir = folder.parent / '.geofabrik-cache'
-                    osm_paths, source_infos = [], []
+                    osm_paths, source_infos, coverages = [], [], []
                     for index, source in enumerate(sources, 1):
                         report(f'Preparing Geofabrik source {index}/{len(sources)}: {source}')
                         osm_path, source_info = obtain(source, cache_dir, self.cancel_event, report, refresh=refresh_extract)
                         osm_paths.append(str(osm_path))
                         source_infos.append(source_info)
+                        if self.pure_osm:
+                            coverages.append(obtain_region_polygon(source_info, cache_dir, self.cancel_event, report))
+                    if coverages and all(geometry is not None for geometry in coverages):
+                        (folder / 'terrain-coverage.geojson').write_text(json.dumps({
+                            'type':'FeatureCollection', 'features':[
+                                {'type':'Feature','properties':{'source':'extract boundary'},'geometry':geometry}
+                                for geometry in coverages]}), encoding='utf-8')
                     report('Combining selected datasets; overlapping OSM features are included once. Coverage is limited to the selected extracts.')
                     extraction = {'sources': osm_paths, 'cache_dir': str(cache_dir), 'folder': str(folder),
                                   'bounds': vars(selected_bounds), 'cancel': str(self.cancel_path),
@@ -413,6 +420,16 @@ class HybridTab(ttk.Frame):
                     job_path.write_text(json.dumps(job), encoding='utf-8')
                     script = worker_script('hybrid_worker.py')
                     self.run_worker(root, script, job_path, report)
+                    region_info = folder / 'map-region-info.json'
+                    if region_info.is_file():
+                        manifest['map_crop'] = json.loads(region_info.read_text(encoding='utf-8'))
+                        (folder / 'osm-manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+                    coastline_info = folder / 'coastline-info.json'
+                    if coastline_info.is_file():
+                        manifest['coastline'] = json.loads(coastline_info.read_text(encoding='utf-8'))
+                        (folder / 'osm-manifest.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+                        with (folder / 'ATTRIBUTION.txt').open('a', encoding='utf-8') as credit:
+                            credit.write('Ocean polygons: ' + manifest['coastline']['source'] + '\n')
                     terrain_info = folder / 'terrain-info.json'
                     if terrain_info.is_file():
                         manifest['terrain'] = json.loads(terrain_info.read_text(encoding='utf-8'))

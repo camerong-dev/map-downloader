@@ -702,7 +702,11 @@ verification evidence and prioritised follow-ups.
 ### Automatic terrain relief
 
 Pure OSM maps automatically include subtle multidirectional hill shading beneath
-roads, buildings and labels, in both Light and Dark styles. Shading uses a fixed
+roads, buildings and labels, in both Light and Dark styles. Terrain is automatically
+trimmed to the selected OSM extract boundaries. Geofabrik region outlines are
+cached for this purpose; local extracts without an outline use an approximate
+outer hull of their OSM features. Multiple selected regions are combined, and
+exclusion holes stay unshaded. Keep `terrain-coverage.geojson` with the project. Shading uses a fixed
 40% strength; water stays flat and clear. There are no terrain controls or extra
 setup steps. Contour lines are not added by default.
 
@@ -719,3 +723,39 @@ relief layer for editing. Keep the project data together, including
 `terrain-info.json` and `TERRAIN_ATTRIBUTION.md`. The export manifest records the
 terrain source. Elevation detail follows the source data; a 2 m map export does
 not create 2 m elevation measurements.
+
+### Automatic ocean and harbour colouring
+
+Pure OSM maps use full-detail, assembled
+[OSM ocean polygons](https://osmdata.openstreetmap.de/data/water-polygons.html),
+independent of the regional PBF boundary. This restores seas, tidal inlets and
+harbours without guessing how incomplete coastline lines should close. Inland
+lakes and rivers still come from the selected regional data.
+
+The first pure OSM export downloads approximately **0.9 GB** and prepares a local
+`.coastline-cache` beside the output folders (allow about **3 GB** of disk space
+while preparing it). Later exports reuse this cache without downloading it again.
+The download supports cancellation and resuming the same source snapshot. Keep
+the cache to continue exporting offline after it has been prepared. A failed
+coastline download stops the export with a retry message rather than producing a
+map with missing or guessed sea areas.
+
+Only polygons intersecting the output area are copied into `sea.fgb`. Keep this
+file and `coastline-info.json` with the saved QGIS project. The export manifest
+records the source and ODbL attribution. Both Light and Dark styles use their
+existing water colours; there are no additional controls.
+
+### Cropped pure OSM exports
+
+Pure OSM TIFFs are automatically cropped to the OSM region outline intersected
+with the selected map area. The output rectangle shrinks to that outline's
+bounds, retaining the original pixel grid and resolution. Pixels outside the
+outline, including holes, are transparent; unrelated coastline and blank land
+outside the extract are removed. JPEG exports preserve the same outline using a
+lossless internal mask. Multiple selected regions are retained.
+
+The manifest records the actual cropped bounds in `map_crop`. Keep
+`map-coverage.geojson` and `map-region-info.json` with the other project data.
+As with terrain trimming, local files without an exact region outline use an
+approximate outer hull of their OSM features. Attribution remains embedded in
+the TIFF metadata and supplied in `ATTRIBUTION.txt`.

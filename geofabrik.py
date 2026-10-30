@@ -1,6 +1,7 @@
 """Download verified Geofabrik extracts, or reuse a local PBF without network access."""
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import time
@@ -207,3 +208,89 @@ def obtain_remote(source, target, cancel, report, refresh):
     partial.replace(target)
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding='utf-8')
     return target, metadata
+
+
+def parse_region_polygon(text):
+    """Read Geofabrik .poly rings, including islands and exclusion rings."""
+    lines = iter(line.strip() for line in text.splitlines() if line.strip())
+    next(lines)  # region name
+    polygons, holes = [], []
+    ended = False
+    for name in lines:
+        if name == 'END':
+            ended = True
+            break
+        ring = []
+        for line in lines:
+            if line == 'END':
+                break
+            point = [float(value) for value in line.split()]
+            if len(point) != 2 or not all(math.isfinite(value) for value in point) or not (-180 <= point[0] <= 180 and -90 <= point[1] <= 90):
+                raise ValueError('Invalid region boundary coordinates.')
+            ring.append(point)
+        else:
+            raise ValueError('Unfinished region boundary ring.')
+        if len(ring) < 3:
+            raise ValueError('Region boundary ring is too short.')
+        if ring[0] != ring[-1]:
+            ring.append(ring[0])
+        (holes if name.startswith('!') else polygons).append(ring if name.startswith('!') else [ring])
+    if not ended or not polygons:
+        raise ValueError('Incomplete region boundary.')
+    for hole in holes:
+        x, y = hole[0]
+        for polygon in polygons:
+            inside = False
+            for a, b in zip(polygon[0], polygon[0][1:]):
+                if (a[1] > y) != (b[1] > y) and x < (b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0]:
+                    inside = not inside
+            if inside:
+                polygon.append(hole)
+                break
+        else:
+            raise ValueError('Region exclusion ring is outside its boundary.')
+    return {'type':'MultiPolygon', 'coordinates':polygons}
+
+
+def obtain_region_polygon(info, cache_dir, cancel, report):
+    """Reuse a cached exact extract footprint; local unknown extracts use a hull."""
+    source = str(info.get('source', ''))
+    if not source.startswith('https://'):
+        if not source:
+            return None
+        local = Path(source)
+        polygon = local.with_name(local.name.removesuffix('.osm.pbf').removesuffix('.pbf').removesuffix('.osm') + '.poly')
+        if polygon.is_file():
+            return parse_region_polygon(polygon.read_text(encoding='utf-8'))
+        metadata = local.with_suffix('.json')
+        if metadata.is_file():
+            try:
+                saved = json.loads(metadata.read_text(encoding='utf-8'))
+                if isinstance(saved, dict) and str(saved.get('source','')).startswith('https://'):
+                    return obtain_region_polygon(saved, cache_dir, cancel, report)
+            except (OSError, ValueError):
+                pass
+        return None
+    try:
+        validate_source(source)
+        url = source.removesuffix('-latest.osm.pbf') + '.poly'
+        if not source.endswith('-latest.osm.pbf'):
+            return None
+        cache = Path(cache_dir)
+        cache.mkdir(parents=True, exist_ok=True)
+        target = cache / (hashlib.sha256(url.encode()).hexdigest()[:16] + '.poly')
+        with source_cache_lock(target, cancel, report):
+            if target.is_file():
+                return parse_region_polygon(target.read_text(encoding='utf-8'))
+            report('Preparing the OSM region boundary for terrain trimming…')
+            with urlopen(Request(url, headers=HEADERS), timeout=30) as response:
+                data = response.read(2_000_001)
+            check_cancel(cancel)
+            if len(data) > 2_000_000:
+                raise ValueError('Region boundary is too large.')
+            geometry = parse_region_polygon(data.decode('utf-8'))
+            target.write_bytes(data)
+            return geometry
+    except (OSError, ValueError, StopIteration):
+        report('Exact extract boundary unavailable; terrain will follow the outline of the selected OSM features.')
+        return None

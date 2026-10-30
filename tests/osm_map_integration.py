@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
@@ -11,8 +12,19 @@ from qgis.core import QgsProject, QgsCoordinateReferenceSystem, QgsCoordinateTra
 from geofabrik_worker import extract, import_extract
 from hybrid_worker import run
 
-with tempfile.TemporaryDirectory(prefix='osm-map-test-') as temporary:
+with tempfile.TemporaryDirectory(prefix='osm-map-test-') as temporary, patch('ocean.prepare_ocean_source') as ocean_source:
     root = Path(temporary)
+    # A complete ocean source is independent of the regional OSM lines.
+    sea_json = root / 'ocean.geojson'
+    sea_json.write_text(json.dumps({'type':'FeatureCollection', 'features':[
+        {'type':'Feature','properties':{},'geometry':{'type':'Polygon','coordinates':[
+            [[-.01,50.99],[.011,50.99],[.011,51.03],[-.01,51.03],[-.01,50.99]],
+            [[.0005,51.010],[.0005,51.012],[.0025,51.012],[.0025,51.010],[.0005,51.010]]
+        ]}}]}))
+    sea_source = root / 'global-sea.fgb'
+    prepared = gdal.VectorTranslate(str(sea_source), str(sea_json), format='FlatGeobuf', dstSRS='EPSG:3857')
+    prepared = None
+    ocean_source.return_value = sea_source
     source = root / 'region.osm'
     nodes = [
         (1, .01, 51.01), (2, .001, 51.005), (3, .019, 51.005),
@@ -44,6 +56,9 @@ with tempfile.TemporaryDirectory(prefix='osm-map-test-') as temporary:
     source.write_text(''.join(parts), encoding='utf-8')
     folder = root / 'map'
     folder.mkdir()
+    (folder/'terrain-coverage.geojson').write_text(json.dumps({'type':'FeatureCollection','features':[
+        {'type':'Feature','properties':{},'geometry':{'type':'Polygon','coordinates':[
+            [[-.01,50.98],[.03,50.98],[.03,51.04],[-.01,51.04],[-.01,50.98]]]}}]}))
     job = {'sources': [str(source)], 'folder': str(folder), 'cache_dir': str(root / 'cache'),
            'bounds': {'west': 0, 'south': 51, 'east': .02, 'north': 51.02},
            'cancel': str(root / 'cancel'), 'map_mode': 'osm', 'terrain_enabled': False, 'resolution': 2, 'compression': 'DEFLATE'}
@@ -63,7 +78,7 @@ with tempfile.TemporaryDirectory(prefix='osm-map-test-') as temporary:
     assert ds.GetGeoTransform()[1] == 2
     assert ds.GetRasterBand(1).GetOverviewCount() > 0
     data = ds.ReadAsArray()
-    assert np.all(data[3] == 255), 'Pure OSM must have an opaque map background'
+    assert np.all(data[3,1:-1,1:-1] == 255), 'Map interior must be opaque; grid-rounded edge pixels may be transparent'
     transform = QgsCoordinateTransform(QgsCoordinateReferenceSystem('EPSG:4326'),
                                        QgsCoordinateReferenceSystem('EPSG:3857'), QgsProject.instance())
     gt = ds.GetGeoTransform()
@@ -99,25 +114,25 @@ with tempfile.TemporaryDirectory(prefix='osm-map-test-') as temporary:
         pass
     jpeg_folder = root / 'jpeg'
     jpeg_folder.mkdir()
-    for name in ('roads', 'places', 'map_lines', 'map_areas'):
+    for name in ('roads', 'places', 'map_lines', 'map_areas', 'terrain-coverage'):
         (jpeg_folder / f'{name}.geojson').write_bytes((folder / f'{name}.geojson').read_bytes())
     run(dict(job, folder=str(jpeg_folder), resolution=10, compression='JPEG', jpeg_quality=90))
     jpeg = gdal.Open(str(jpeg_folder / 'osm.tif'))
     assert jpeg.RasterCount == 3 and jpeg.GetGeoTransform()[1] == 10
     assert 'JPEG' in jpeg.GetMetadataItem('COMPRESSION', 'IMAGE_STRUCTURE')
-    assert np.all(jpeg.GetRasterBand(1).GetMaskBand().ReadAsArray() == 255)
+    assert np.all(jpeg.GetRasterBand(1).GetMaskBand().ReadAsArray()[1:-1,1:-1] == 255)
     jpeg = None
     project.clear()
     dark_folder = root / 'dark'
     dark_folder.mkdir()
-    for name in ('roads', 'places', 'map_lines', 'map_areas'):
+    for name in ('roads', 'places', 'map_lines', 'map_areas', 'terrain-coverage'):
         (dark_folder / f'{name}.geojson').write_bytes((folder / f'{name}.geojson').read_bytes())
     run(dict(job, folder=str(dark_folder), osm_style='Dark'))
     dark = gdal.Open(str(dark_folder / 'osm.tif'))
     assert dark.GetMetadataItem('OSM_MAP_STYLE') == 'Dark'
     data = dark.ReadAsArray()
     gt = dark.GetGeoTransform()
-    assert np.all(data[3] == 255)
+    assert np.all(data[3,1:-1,1:-1] == 255)
     np.testing.assert_array_equal(colour(.001, 51.019), [16, 45, 66])
     np.testing.assert_array_equal(colour(.019, 51.019), [21, 28, 36])
     np.testing.assert_array_equal(colour(.004, 51.003), [52, 65, 77])
@@ -144,7 +159,7 @@ with tempfile.TemporaryDirectory(prefix='osm-map-test-') as temporary:
     dem.Close()
     shaded_folder = root / 'shaded'
     shaded_folder.mkdir()
-    for name in ('roads','places','map_lines','map_areas'):
+    for name in ('roads','places','map_lines','map_areas','terrain-coverage'):
         (shaded_folder / f'{name}.geojson').write_bytes((folder / f'{name}.geojson').read_bytes())
     run(dict(job,folder=str(shaded_folder),osm_style='Dark',terrain_enabled=True,
              terrain_dem=str(terrain_dem),terrain_contours=True))
@@ -162,6 +177,7 @@ with tempfile.TemporaryDirectory(prefix='osm-map-test-') as temporary:
     assert project.read(str(shaded_folder / 'osm.qgz'))
     assert all(layer.isValid() for layer in project.mapLayers().values())
     names = [layer.name() for layer in project.layerTreeRoot().customLayerOrder()]
+    assert names.index('Terrain relief') < names.index('Woodland') < names.index('Sea')
     assert names.index('Water') < names.index('Terrain relief')
     assert names.index('Buildings') < names.index('Terrain relief')
     project.clear()

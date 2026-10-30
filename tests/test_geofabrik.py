@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from downloader import Cancelled
 from geofabrik import DEFAULT_SOURCE, obtain, validate_source, validate_sources, retry_network, NETWORK_TIMEOUT
 from urllib.error import HTTPError
+from geofabrik import parse_region_polygon, obtain_region_polygon
 
 
 class Response(io.BytesIO):
@@ -31,6 +32,28 @@ class InterruptedResponse(Response):
 
 
 class GeofabrikTests(unittest.TestCase):
+    def test_region_outline_preserves_islands_and_holes(self):
+        polygon = parse_region_polygon('region\n1\n0 0\n4 0\n4 4\n0 4\nEND\n2\n8 0\n9 0\n9 1\nEND\n!1\n1 1\n2 1\n2 2\nEND\nEND')
+        self.assertEqual(len(polygon['coordinates']),2)
+        self.assertEqual(len(polygon['coordinates'][0]),2)
+        self.assertEqual(polygon['coordinates'][0][0][0],polygon['coordinates'][0][0][-1])
+        for bad in ('name\nEND','name\n1\n0 0\n1 0\n1 1','name\n1\nnan 0\n1 0\n1 1\nEND\nEND'):
+            with self.assertRaises((ValueError,StopIteration)):
+                parse_region_polygon(bad)
+
+    def test_region_outline_is_cached_and_local_unknown_sources_stay_offline(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1]) as temporary:
+            root = Path(temporary)
+            cancel = threading.Event()
+            body = b'region\n1\n0 0\n1 0\n1 1\n0 1\nEND\nEND'
+            with patch('geofabrik.urlopen',return_value=Response(body)) as network:
+                geometry = obtain_region_polygon({'source':DEFAULT_SOURCE},root,cancel,lambda _:None)
+                self.assertEqual(obtain_region_polygon({'source':DEFAULT_SOURCE},root,cancel,lambda _:None),geometry)
+                network.assert_called_once()
+                self.assertTrue(network.call_args.args[0].full_url.endswith('/west-sussex.poly'))
+            with patch('geofabrik.urlopen',side_effect=AssertionError('Local extract must stay offline')):
+                self.assertIsNone(obtain_region_polygon({'source':str(root/'local.osm.pbf')},root,cancel,lambda _:None))
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1])
         self.folder = Path(self.temporary.name)

@@ -10,7 +10,7 @@ from osgeo import gdal
 from qgis.core import (Qgis, QgsApplication, QgsCoordinateReferenceSystem,
                        QgsCoordinateTransform, QgsLineSymbol, QgsFillSymbol, QgsMapSettings,
                        QgsMapRendererSequentialJob, QgsPalLayerSettings, QgsProject,
-                       QgsRasterLayer, QgsRectangle, QgsSingleSymbolRenderer, QgsGeometry, QgsFeature, QgsSpatialIndex, QgsFeatureRequest,
+                       QgsRasterLayer, QgsRectangle, QgsSingleSymbolRenderer, QgsFeatureRequest,
                        QgsTextBufferSettings, QgsTextFormat, QgsVectorLayer,
                        QgsVectorLayerSimpleLabeling, QgsReferencedRectangle)
 from qgis.PyQt.QtCore import QSize
@@ -20,6 +20,8 @@ from raster_output import finish_output, write_rgb_style, compression_options
 from hybrid_style import DEFAULT_ROADS, ROAD_GROUPS, ROAD_LABELS, osm_display_scale, osm_style
 from map_plan import MapPlan, projected_plan
 from terrain import TerrainOptions, terrain_layers, TERRAIN_CREDIT
+from ocean import ocean_polygons
+from osm_region import export_region, block_mask
 
 _application = None
 FONT = 'Arial' if sys.platform == 'win32' else 'DejaVu Sans'
@@ -140,11 +142,16 @@ def prepare_render_data(folder, job):
     return sources
 
 
-def write_rendered_image(result, image, x, y, jpeg):
+def write_rendered_image(result, image, x, y, jpeg, clip_mask=None):
     """Transfer unpremultiplied RGBA directly from Qt to GDAL, without PNG IO."""
     image = image.convertToFormat(QImage.Format.Format_RGBA8888)
     width, height = image.width(), image.height()
     pixels = image.constBits().asstring(image.sizeInBytes())
+    if clip_mask is not None:
+        import numpy as np
+        rgba = np.frombuffer(pixels,dtype=np.uint8).reshape(height,image.bytesPerLine())[:, :width*4].reshape(height,width,4).copy()
+        rgba[~clip_mask] = 0
+        pixels = rgba.tobytes()
     result.WriteRaster(x, y, width, height, pixels, band_list=[1, 2, 3] if jpeg else [1, 2, 3, 4],
                        buf_pixel_space=4, buf_line_space=image.bytesPerLine(), buf_band_space=1)
     if jpeg:
@@ -243,7 +250,12 @@ def render_raster(name, selected, settings, extent, width, height, resolution, f
                               else '© OpenStreetMap contributors · openstreetmap.org/copyright')
                     painter.drawText(8 - x, height - 8 - y, credit)
                     painter.end()
-                write_rendered_image(result, image, x, y, jpeg)
+                clip_mask = None
+                if name == 'osm' and (folder/'map-coverage.geojson').is_file():
+                    clip_mask = block_mask(folder/'map-coverage.geojson',settings.destinationCrs().toWkt(),
+                        (extent.xMinimum()+x*resolution,resolution,0,extent.yMaximum()-y*resolution,0,-resolution),w,h)
+                    check(job)
+                write_rendered_image(result, image, x, y, jpeg, clip_mask)
                 completed = row * cols + col + 1
                 elapsed = time.monotonic() - started
                 remaining = elapsed / completed * (rows * cols - completed)
@@ -264,65 +276,12 @@ def render_raster(name, selected, settings, extent, width, height, resolution, f
 
 
 
-def coastline_water(folder, project, extent, job, sources):
-    """Close OSM's directed coastline lines against the requested map boundary."""
-    if not has_matching_features(sources['map_lines'], "natural = 'coastline'"):
+def coastline_water(folder, project, extent, job):
+    """Use assembled global ocean polygons, independent of extract boundaries."""
+    target = ocean_polygons(folder, extent, job, emit)
+    if target is None:
         return None
     colours, _ = osm_style(job.get('osm_style', 'Light'))
-    source = QgsVectorLayer(sources['map_lines'], 'Coastline source', 'ogr')
-    if not source.isValid():
-        return None
-    source.setSubsetString("natural = 'coastline'")
-    clip = QgsGeometry.fromRect(extent)
-    edges = [QgsGeometry.fromPolylineXY(clip.asPolygon()[0])]
-    index = QgsSpatialIndex(flags=QgsSpatialIndex.Flag.FlagStoreFeatureGeometries)
-    transform = QgsCoordinateTransform(source.crs(), project.crs(), project)
-    ident = 0
-    for feature in source.getFeatures():
-        check(job)
-        line = feature.geometry()
-        line.transform(transform)
-        if not line.intersects(clip):
-            continue
-        parts = line.asMultiPolyline() if line.isMultipart() else [line.asPolyline()]
-        for points in parts:
-            if len(points) < 2:
-                continue
-            directed = QgsGeometry.fromPolylineXY(points)
-            saved = QgsFeature(ident)
-            saved.setGeometry(directed)
-            index.addFeature(saved)
-            ident += 1
-            edges.append(directed.intersection(clip))
-    if not ident:
-        return None
-    emit('Preparing sea areas from OSM coastlines…')
-    faces = QgsGeometry.polygonize([QgsGeometry.unaryUnion(edges)])
-    if faces.isEmpty():
-        raise ValueError('Could not build coastal water areas from this extract.')
-    polygons = faces.asGeometryCollection()
-    if len(polygons) < 2:
-        emit('Coastline does not enclose or divide the requested area; sea fill skipped. Check regional extract coverage.')
-        return None
-    features = []
-    for face in polygons:
-        check(job)
-        point = face.pointOnSurface().asPoint()
-        nearest = index.nearestNeighbor(point, 1)
-        if not nearest:
-            continue
-        line = index.geometry(nearest[0])
-        _, _, after, _ = line.closestSegmentWithContext(point)
-        a, b = line.vertexAt(after-1), line.vertexAt(after)
-        cross = (b.x()-a.x())*(point.y()-a.y()) - (b.y()-a.y())*(point.x()-a.x())
-        # OSM coastlines run with land on the left and sea on the right.
-        if cross < 0:
-            features.append({'type': 'Feature', 'properties': {}, 'geometry': json.loads(face.asJson())})
-    if not features:
-        return None
-    target = folder / 'sea.geojson'
-    target.write_text(json.dumps({'type': 'FeatureCollection',
-        'crs': {'type': 'name', 'properties': {'name': 'EPSG:3857'}}, 'features': features}), encoding='utf-8')
     layer = QgsVectorLayer(str(target), 'Sea', 'ogr')
     if not layer.isValid():
         raise RuntimeError('Could not load coastal water areas.')
@@ -421,6 +380,9 @@ def run(job):
     display_scale = osm_display_scale(job.get('osm_scale', 1))
     if not math.isfinite(resolution) or resolution <= 0:
         raise ValueError('Resolution must be a positive finite number.')
+    sources = prepare_render_data(folder, job)
+    if pure_osm:
+        extent = export_region(folder,sources,extent,resolution,project,job,emit)
     if job.get('render_rasters', True):
         plan = projected_plan(extent.width(), extent.height(), resolution, int(job.get('render_block_size', 4096)))
         width, height = plan.width, plan.height
@@ -428,7 +390,6 @@ def run(job):
         extent.setXMaximum(extent.xMinimum() + width * resolution)
         extent.setYMinimum(extent.yMaximum() - height * resolution)
     layers = []
-    sources = prepare_render_data(folder, job)
     selected_roads = job.get('road_groups', list(ROAD_GROUPS) if pure_osm else DEFAULT_ROADS)
     if any(group not in ROAD_GROUPS for group in selected_roads):
         raise ValueError('Unknown road display group.')
@@ -494,17 +455,17 @@ def run(job):
         road_rank = {title: i for i, title in enumerate(ROAD_GROUPS.values())}
         layers.sort(key=lambda layer: road_rank.get(layer.name(), -1))
         basemap = basemap_layers(folder, project, job, display_scale, sources)
-        sea = coastline_water(folder, project, extent, job, sources)
+        sea = coastline_water(folder, project, extent, job)
         water = [layer for layer in basemap if layer.name() == 'Water']
         if sea is not None:
             water.append(sea)
-        terrain = terrain_layers(folder, extent, project, job, emit, water_layers=water)
+        terrain = terrain_layers(folder, extent, project, job, emit, water_layers=water, coverage_sources=sources)
         if terrain:
             # Water/buildings shield the relief; streets and their labels stay
             # above it. Shading still shows through the land-use colours.
             upper = [layer for layer in basemap if layer.name() in ('Railways','Waterways','Coastlines','Paths and tracks','Buildings','Water')]
             lower = [layer for layer in basemap if layer not in upper]
-            layers += upper + ([sea] if sea is not None else []) + terrain + lower
+            layers += upper + terrain + lower + ([sea] if sea is not None else [])
         else:
             layers += basemap + ([sea] if sea is not None else [])
     satellite = None

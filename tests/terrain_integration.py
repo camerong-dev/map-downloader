@@ -1,6 +1,6 @@
 """Offline elevation preparation, contours, hillshade and theme checks."""
 from pathlib import Path
-import sys,tempfile
+import sys,tempfile,json
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import numpy as np
@@ -56,6 +56,46 @@ with tempfile.TemporaryDirectory(prefix='terrain-test-') as temporary:
     shade=gdal.Open(str(folder/'terrain_relief.tif'))
     assert shade.GetRasterBand(4).ReadAsArray().max()<=2, 'Flat ground should not receive uniform grey shading'
     shade=None
+    project.clear()
+    # Region masks retain multiple selected regions and holes, and remove
+    # surrounding relief from both the TIFF data and the editable QGIS layer.
+    folder=root/'trimmed'
+    folder.mkdir()
+    coverage={'type':'FeatureCollection','crs':{'type':'name','properties':{'name':'EPSG:3857'}},'features':[
+        {'type':'Feature','properties':{},'geometry':{'type':'Polygon','coordinates':[
+            [[0,0],[3000,0],[3000,5120],[0,5120],[0,0]],
+            [[800,800],[800,1200],[1200,1200],[1200,800],[800,800]]]}},
+        {'type':'Feature','properties':{},'geometry':{'type':'Polygon','coordinates':[
+            [[4000,4000],[5120,4000],[5120,5120],[4000,5120],[4000,4000]]]}}
+    ]}
+    (folder/'terrain-coverage.geojson').write_text(json.dumps(coverage))
+    layers=terrain_layers(folder,extent,project,dict(job,terrain_dem=str(source),terrain_contours=False),lambda _:None)
+    shade=gdal.Open(str(folder/'terrain_relief.tif'))
+    alpha=shade.GetRasterBand(4).ReadAsArray()
+    assert alpha[60:,90:].max()==0, 'No hills outside extract coverage'
+    assert alpha[103,25]==0, 'Exclusion hole must remain unshaded'
+    assert np.count_nonzero(alpha[:25,105:])>10, 'Second selected region must retain relief'
+    assert np.count_nonzero(alpha[40:80,20:60])>100, 'Interior terrain must remain'
+    shade=None
+    assert json.loads((folder/'terrain-info.json').read_text())['coverage']=='terrain-coverage.geojson'
+    project.clear()
+    # A local file with no authoritative boundary gets a feature outline,
+    # rather than shading the full selected rectangle.
+    folder=root/'local-outline'
+    folder.mkdir()
+    points=root/'local-places.geojson'
+    points.write_text(json.dumps({'type':'FeatureCollection',
+        'crs':{'type':'name','properties':{'name':'EPSG:3857'}},'features':[
+            {'type':'Feature','properties':{},'geometry':{'type':'Point','coordinates':point}}
+            for point in ((1000,1000),(3000,1000),(1000,3000))]}))
+    layers=terrain_layers(folder,extent,project,dict(job,terrain_dem=str(source),terrain_contours=False),
+                          lambda _:None,coverage_sources={'places':str(points)})
+    shade=gdal.Open(str(folder/'terrain_relief.tif'))
+    alpha=shade.GetRasterBand(4).ReadAsArray()
+    assert alpha[:40,:].max()==0 and alpha[:,90:].max()==0
+    assert np.count_nonzero(alpha)>100
+    shade=None
+    assert json.loads((folder/'terrain-coverage.geojson').read_text())['features'][0]['properties']['source']=='OSM feature hull'
     project.clear()
     # Terrarium decoding uses actual PNG channels without network access.
     tile=root/'tile.png'
